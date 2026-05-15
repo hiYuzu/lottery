@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>抽奖管理后台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="page-scrollable">
+  <!-- 背景层 -->
+  <div id="bg-layer"></div>
+
+  <!-- 顶部工具栏 -->
+  <header class="toolbar">
+    <h1 class="title">⚙️ 抽奖管理后台</h1>
+    <div class="toolbar-actions">
+      <button id="btn-export" class="btn">📥 导出结果</button>
+      <a href="/" class="btn">🎯 返回抽奖页</a>
+    </div>
+  </header>
+
+  <!-- 主内容 -->
+  <main class="admin-container">
+    <!-- 奖项配置 -->
+    <section class="panel admin-section">
+      <h2>奖项配置</h2>
+      <div id="prize-editor" class="prize-editor"></div>
+      <div class="admin-actions">
+        <button id="btn-add-prize" class="btn">+ 添加奖项</button>
+        <button id="btn-save-prizes" class="btn btn-primary">保存配置</button>
+      </div>
+    </section>
+
+    <!-- 参与人员 -->
+    <section class="panel admin-section">
+      <h2>参与人员</h2>
+      <div id="name-list" class="name-grid"></div>
+    </section>
+
+    <!-- 抽奖控制 -->
+    <section class="panel admin-section">
+      <h2>抽奖控制</h2>
+      <div class="admin-actions">
+        <button id="btn-reset" class="btn btn-danger">🔄 重置所有抽奖结果</button>
+      </div>
+      <p class="admin-hint">重置将清空所有奖项的中奖记录，此操作不可撤销。</p>
+    </section>
+  </main>
+
+  <!-- 提示 Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    const $ = id => document.getElementById(id);
+    const prizeEditor = $('prize-editor');
+    const btnAddPrize = $('btn-add-prize');
+    const btnSavePrizes = $('btn-save-prizes');
+    const btnReset = $('btn-reset');
+    const btnExport = $('btn-export');
+    const nameListEl = $('name-list');
+    const toastEl = $('toast');
+
+    let state = { prizes: [] };
+    let nameList = [];
+    let hqPool = new Set();
+    let editorData = [];
+    let ws = null;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let hasUnsavedChanges = false;
+
+    // ==================== 初始化 ====================
+    init();
+
+    function init() {
+      loadNameList();
+      connectWebSocket();
+      bindEvents();
+    }
+
+    // ==================== WebSocket ====================
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${location.host}`;
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        showToast('已连接到服务器');
+        clearReconnect();
+      };
+
+      ws.onmessage = e => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        showToast('连接已断开，正在重连...', 'error');
+        scheduleReconnect();
+      };
+
+      ws.onerror = () => {
+        showToast('连接异常', 'error');
+      };
+    }
+
+    function scheduleReconnect() {
+      clearReconnect();
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+      reconnectAttempts++;
+      reconnectTimer = setTimeout(connectWebSocket, delay);
+    }
+
+    function clearReconnect() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function send(msg) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+      } else {
+        showToast('未连接到服务器，请稍后重试', 'error');
+      }
+    }
+
+    // ==================== 消息处理 ====================
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'init':
+          state = msg.state;
+          renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] })));
+          break;
+        case 'prizesUpdated':
+          state = msg.state;
+          renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] })));
+          showToast('奖项配置已更新');
+          break;
+        case 'resetDone':
+          state = msg.state;
+          renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] })));
+          showToast('抽奖已重置');
+          break;
+        case 'drawResult':
+          state = msg.state;
+          renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] })));
+          break;
+        case 'error':
+          showToast(msg.message, 'error');
+          break;
+      }
+    }
+
+    // ==================== 加载名单 ====================
+    function loadNameList() {
+      fetch('data/list.json')
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            nameList = data.map(item => item.name).filter(Boolean);
+            hqPool = new Set();
+          } else {
+            const list = data.name || [];
+            nameList = list.map(item => item.name).filter(Boolean);
+            hqPool = new Set(
+              list.filter(item => item.dept === 'CN').map(item => item.name).filter(Boolean)
+            );
+          }
+          renderNameList();
+        })
+        .catch(() => {
+          showToast('加载名单失败', 'error');
+        });
+    }
+
+    function renderNameList() {
+      const allDrawn = new Set();
+      state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
+
+      nameListEl.innerHTML = nameList.map(name => {
+        const isDrawn = allDrawn.has(name);
+        const cls = isDrawn ? 'name-tag drawn' : 'name-tag';
+        return `<span class="${cls}">${escapeHtml(name)}</span>`;
+      }).join('');
+    }
+
+    // ==================== 奖项编辑器 ====================
+    const dragSupported = 'draggable' in document.createElement('div');
+    let dragSrcIndex = null;
+
+    function renderPrizeEditor(data) {
+      editorData = data || [];
+      prizeEditor.innerHTML = editorData.map((p, i) => `
+        <div class="prize-row${dragSupported ? ' draggable' : ''}" data-index="${i}" draggable="true">
+          <span class="drag-handle" title="拖动排序">⠿</span>
+          <input type="text" value="${escapeHtml(p.name)}" placeholder="奖项名称" data-field="name" />
+          <input type="number" value="${p.total}" min="1" placeholder="总人数" data-field="total" />
+          <input type="number" value="${p.perDraw || 1}" min="1" placeholder="单次" data-field="perDraw" />
+          <label class="consolation-label"><input type="checkbox" ${p.isConsolation ? 'checked' : ''} data-field="isConsolation" />阳光普照</label>
+          <span class="prize-drawn-count">${p.drawn.length}人已中奖</span>
+          <button class="btn btn-remove" data-remove="${i}">删除</button>
+        </div>
+      `).join('');
+      renderNameList();
+      bindDragEvents();
+    }
+
+    function syncEditorData() {
+      const rows = prizeEditor.querySelectorAll('.prize-row');
+      rows.forEach((row, i) => {
+        const nameInput = row.querySelector('[data-field="name"]');
+        const totalInput = row.querySelector('[data-field="total"]');
+        const perDrawInput = row.querySelector('[data-field="perDraw"]');
+        const consolationInput = row.querySelector('[data-field="isConsolation"]');
+        if (editorData[i]) {
+          editorData[i].name = nameInput.value;
+          editorData[i].total = parseInt(totalInput.value, 10) || 1;
+          editorData[i].perDraw = parseInt(perDrawInput.value, 10) || 1;
+          editorData[i].isConsolation = consolationInput ? consolationInput.checked : false;
+        }
+      });
+    }
+
+    function bindDragEvents() {
+      if (!dragSupported) return;
+      const rows = prizeEditor.querySelectorAll('.prize-row');
+      rows.forEach(row => {
+        row.addEventListener('dragstart', e => {
+          dragSrcIndex = parseInt(row.dataset.index, 10);
+          row.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        row.addEventListener('dragend', () => {
+          row.classList.remove('dragging');
+          prizeEditor.querySelectorAll('.prize-row').forEach(r => r.classList.remove('drag-over'));
+        });
+        row.addEventListener('dragover', e => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          row.classList.add('drag-over');
+        });
+        row.addEventListener('dragleave', () => {
+          row.classList.remove('drag-over');
+        });
+        row.addEventListener('drop', e => {
+          e.preventDefault();
+          row.classList.remove('drag-over');
+          const targetIndex = parseInt(row.dataset.index, 10);
+          if (dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+          syncEditorData();
+          const item = editorData.splice(dragSrcIndex, 1)[0];
+          editorData.splice(targetIndex, 0, item);
+          renderPrizeEditor(editorData);
+        });
+      });
+    }
+
+    function addPrizeRow() {
+      editorData.push({ name: '', total: 1, perDraw: 1, drawn: [], isConsolation: false });
+      renderPrizeEditor(editorData);
+    }
+
+    function removePrizeRow(index) {
+      editorData.splice(index, 1);
+      renderPrizeEditor(editorData);
+    }
+
+    function savePrizes() {
+      const rows = prizeEditor.querySelectorAll('.prize-row');
+      const prizes = [];
+      let valid = true;
+      let errorMsg = '';
+
+      rows.forEach((row, i) => {
+        const nameInput = row.querySelector('[data-field="name"]');
+        const totalInput = row.querySelector('[data-field="total"]');
+        const perDrawInput = row.querySelector('[data-field="perDraw"]');
+        const consolationInput = row.querySelector('[data-field="isConsolation"]');
+        const name = nameInput.value.trim();
+        const total = parseInt(totalInput.value, 10);
+        const perDraw = parseInt(perDrawInput.value, 10);
+
+        if (!name || isNaN(total) || total < 1 || isNaN(perDraw) || perDraw < 1) {
+          valid = false;
+          nameInput.style.borderColor = name ? '' : 'red';
+          totalInput.style.borderColor = (!isNaN(total) && total >= 1) ? '' : 'red';
+          perDrawInput.style.borderColor = (!isNaN(perDraw) && perDraw >= 1) ? '' : 'red';
+        } else {
+          nameInput.style.borderColor = '';
+          totalInput.style.borderColor = '';
+          perDrawInput.style.borderColor = '';
+        }
+
+        const existing = editorData[i] || {};
+        const drawn = existing.drawn || [];
+
+        if (drawn.length > total) {
+          valid = false;
+          totalInput.style.borderColor = 'red';
+          errorMsg = `"${name || '未命名'}" 的总人数不能少于已中奖人数(${drawn.length}人)`;
+        }
+
+        prizes.push({
+          name,
+          total,
+          perDraw: perDraw || 1,
+          drawn,
+          isConsolation: consolationInput ? consolationInput.checked : false,
+        });
+      });
+
+      if (!valid) {
+        showToast(errorMsg || '请确保每个奖项都有名称，总人数和单次抽取人数均≥1', 'error');
+        return;
+      }
+
+      // 检查重复名称
+      const names = prizes.map(p => p.name);
+      const duplicates = names.filter((n, i) => names.indexOf(n) !== i);
+      if (duplicates.length > 0) {
+        showToast(`奖项名称重复: ${duplicates.join('、')}`, 'error');
+        return;
+      }
+
+      send({ type: 'updatePrizes', prizes });
+      hasUnsavedChanges = false;
+    }
+
+    // ==================== 重置 ====================
+    function resetLottery() {
+      if (!confirm('确定要重置所有抽奖结果吗？此操作不可撤销。')) return;
+      send({ type: 'reset' });
+    }
+
+    // ==================== 工具函数 ====================
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    let toastTimer = null;
+    function showToast(message, type) {
+      toastEl.textContent = message;
+      toastEl.className = 'toast' + (type === 'error' ? ' error' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toastEl.classList.add('hidden');
+      }, 3000);
+    }
+
+    // ==================== 导出结果 ====================
+    function exportResults() {
+      const hasDrawn = state.prizes.some(p => p.drawn.length > 0);
+      const history = state.history || [];
+      if (!hasDrawn && history.length === 0) {
+        showToast('暂无中奖记录可导出');
+        return;
+      }
+      const lines = ['抽奖结果', ''];
+      state.prizes.filter(p => p.drawn.length > 0).forEach(p => {
+        lines.push(`${p.name}: ${p.drawn.join('、')}`);
+      });
+      if (history.length > 0) {
+        lines.push('', '--- 抽奖记录 ---');
+        history.slice().reverse().forEach(h => {
+          const time = new Date(h.time).toLocaleString('zh-CN');
+          lines.push(`${time}  ${h.prizeName}  ${h.winners.join('、')}`);
+        });
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `抽奖结果_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('结果已导出');
+    }
+
+    // ==================== 事件绑定 ====================
+    function bindEvents() {
+      btnAddPrize.addEventListener('click', addPrizeRow);
+      btnSavePrizes.addEventListener('click', savePrizes);
+      btnReset.addEventListener('click', resetLottery);
+      if (btnExport) btnExport.addEventListener('click', exportResults);
+
+      prizeEditor.addEventListener('click', e => {
+        const btn = e.target.closest('[data-remove]');
+        if (btn) removePrizeRow(parseInt(btn.dataset.remove, 10));
+      });
+
+      prizeEditor.addEventListener('input', () => { hasUnsavedChanges = true; });
+
+      window.addEventListener('beforeunload', e => {
+        if (hasUnsavedChanges) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

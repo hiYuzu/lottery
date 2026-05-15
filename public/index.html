@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>抽奖系统</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 背景层 -->
+  <div id="bg-layer"></div>
+
+  <!-- 烟花画布 -->
+  <canvas id="fireworks-canvas"></canvas>
+
+  <!-- 顶部工具栏 -->
+  <header class="toolbar">
+    <h1 class="title">🎉 多人同步抽奖系统</h1>
+    <div class="toolbar-actions">
+      <button id="btn-music" class="btn btn-icon" title="音乐开关">🔊</button>
+      <button id="btn-export" class="btn" title="导出结果">📥 导出</button>
+      <a href="/admin.html" class="btn" title="管理后台">⚙️ 管理后台</a>
+    </div>
+  </header>
+
+  <!-- 主内容区 -->
+  <main class="container">
+    <!-- 左侧：抽奖区域 -->
+    <section class="panel panel-draw">
+      <!-- 奖项选择 -->
+      <div id="prize-tabs" class="prize-tabs"></div>
+
+      <!-- 滚动名字展示 -->
+      <div class="draw-stage">
+        <div id="rolling-name" class="rolling-name">准备抽奖</div>
+      </div>
+
+      <button id="btn-draw" class="btn btn-draw-action">🎯 开始抽奖</button>
+
+      <!-- 当前奖项已中奖名单 -->
+      <div id="drawn-list" class="drawn-list"></div>
+    </section>
+
+    <!-- 右侧：中奖结果汇总 -->
+    <section class="panel panel-results">
+      <h2>中奖名单</h2>
+      <div id="results-summary"></div>
+    </section>
+  </main>
+
+  <!-- 中奖结果弹窗 -->
+  <div id="modal-winner" class="modal hidden">
+    <div class="modal-content winner-modal">
+      <div class="winner-announce">
+        <div id="winner-prize" class="winner-prize"></div>
+        <div id="winner-name" class="winner-name"></div>
+      </div>
+      <button id="btn-close-winner" class="btn btn-primary">确认</button>
+    </div>
+  </div>
+
+  <!-- 提示 Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 音频 -->
+  <audio id="bg-music" loop preload="auto">
+    <source src="music/bg.mp3" type="audio/mpeg" />
+  </audio>
+  <audio id="win-music" preload="auto">
+    <source src="music/win.mp3" type="audio/mpeg" />
+  </audio>
+
+  <script src="script.js"></script>
+</body>
+</html>

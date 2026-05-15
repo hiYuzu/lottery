@@ -1,0 +1,13 @@
+{
+  "name": "lottery",
+  "version": "1.0.0",
+  "description": "多人同步抽奖系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}
