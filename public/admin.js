@@ -3,6 +3,10 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
 (function () {
   'use strict';
 
+  // 鉴权守卫：无 token 则跳转登录页
+  const token = sessionStorage.getItem('adminToken');
+  if (!token) { location.href = '/login.html'; return; }
+
   const $ = id => document.getElementById(id);
   const prizeEditor = $('prize-editor');
   const btnAddPrize = $('btn-add-prize');
@@ -12,12 +16,20 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   const nameListEl = $('name-list');
   const toastEl = $('toast');
 
-  let state = { prizes: [] };
+  let state = { prizes: [], history: [] };
   let nameList = [];
   let hqPool = new Set();
   let editorData = [];
   let hasUnsavedChanges = false;
   let nameDeptMap = {};
+
+  /** 从 state 中提取当前会话的奖项列表 */
+  function getSessionPrizes(st) {
+    if (st.sessions && st.currentSession && st.sessions[st.currentSession]) {
+      return st.sessions[st.currentSession].prizes || [];
+    }
+    return st.prizes || [];
+  }
 
   function getToken() { return sessionStorage.getItem('adminToken'); }
 
@@ -28,33 +40,45 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     onError: () => showToast(toastEl, '连接异常', 'error'),
   });
 
-  wsManager.on('init', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); });
-  wsManager.on('prizesUpdated', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '奖项配置已更新'); });
-  wsManager.on('resetDone', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '抽奖已重置'); });
-  wsManager.on('drawResult', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); });
+  wsManager.on('init', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); });
+  wsManager.on('prizesUpdated', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '奖项配置已更新'); });
+  wsManager.on('resetDone', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '抽奖已重置'); });
+  wsManager.on('drawResult', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); });
   wsManager.on('error', msg => showToast(toastEl, msg.message, 'error'));
-  wsManager.on('undoResult', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '已撤销上一次抽奖'); });
+  wsManager.on('undoResult', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '已撤销上一次抽奖'); });
+  wsManager.on('sessionChanged', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); loadSessions(); showToast(toastEl, '活动已切换'); });
   wsManager.on('onlineCount', msg => { let el = $('online-count'); if (!el) { el = document.createElement('span'); el.id = 'online-count'; el.className = 'online-count'; document.querySelector('.toolbar-actions').prepend(el); } el.textContent = `在线 ${msg.count} 人`; });
 
   init();
 
   function init() {
     loadNameList().then(({ names, hqPool: hp }) => { nameList = names; hqPool = hp; }).catch(() => showToast(toastEl, '加载名单失败', 'error'));
-    fetch('/api/names').then(r => r.json()).then(data => {
+    fetch(`/api/names?token=${encodeURIComponent(getToken())}`).then(r => r.json()).then(data => {
       const list = Array.isArray(data) ? data : (data.name || []);
       nameList = list.map(item => item.name).filter(Boolean);
       nameDeptMap = {};
       list.forEach(item => { nameDeptMap[item.name] = item.dept || ''; });
       renderNameList();
     });
+    loadSessions();
     bindEvents();
+  }
+
+  async function loadSessions() {
+    const res = await fetch(`/api/sessions?token=${encodeURIComponent(getToken())}`);
+    const data = await res.json();
+    const select = $('session-select');
+    if (!select) return;
+    select.innerHTML = data.sessions.map(s =>
+      `<option value="${escapeHtml(s.name)}" ${s.name === data.current ? 'selected' : ''}>${escapeHtml(s.name)} (${s.drawCount}次抽奖)</option>`
+    ).join('');
   }
 
   function send(msg) { wsManager.send(msg); }
 
   function renderNameList() {
     const allDrawn = new Set();
-    state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
+    getSessionPrizes(state).forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
     nameListEl.innerHTML = nameList.map((name, i) => {
       const isDrawn = allDrawn.has(name);
       const dept = nameDeptMap[name] || '';
@@ -190,6 +214,19 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     $('btn-batch-cancel')?.addEventListener('click', () => $('batch-import-panel').classList.add('hidden'));
     $('btn-batch-confirm')?.addEventListener('click', batchImport);
     nameListEl.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removeNameEntry(parseInt(btn.dataset.remove, 10)); });
+    // 活动管理
+    $('btn-switch-session')?.addEventListener('click', async () => {
+      const name = $('session-select')?.value; if (!name) return;
+      await fetch('/api/sessions/switch', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify({ name }) });
+      loadSessions();
+    });
+    $('btn-create-session')?.addEventListener('click', async () => {
+      const input = $('input-new-session'); const name = input?.value.trim(); if (!name) return;
+      const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify({ name }) });
+      const data = await res.json();
+      if (data.success) { input.value = ''; loadSessions(); showToast(toastEl, '活动已创建并切换'); }
+      else showToast(toastEl, data.error, 'error');
+    });
     // 音效上传
     $('btn-upload-bg')?.addEventListener('click', async () => {
       const file = $('upload-bg-music')?.files[0]; if (!file) return;

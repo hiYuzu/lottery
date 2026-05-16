@@ -32,17 +32,26 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   let musicOn = false;
   let countdownRAF = null;
 
+  /** 从 state 中提取当前会话数据 */
+  function getSessionState(st) {
+    if (st.sessions && st.currentSession && st.sessions[st.currentSession]) {
+      return st.sessions[st.currentSession];
+    }
+    return st;
+  }
+
   const wsManager = createWS({
     onOpen: () => showToast(toastEl, '已连接到服务器'),
     onClose: () => { showToast(toastEl, '连接已断开，正在重连...', 'error'); resetDrawUI(); },
     onError: () => showToast(toastEl, '连接异常', 'error'),
   });
 
-  wsManager.on('init', msg => { state = msg.state; if (!state.history) state.history = []; renderAll(); });
+  wsManager.on('init', msg => { state = msg.state; renderAll(); });
   wsManager.on('drawResult', msg => handleDrawResult(msg));
-  wsManager.on('prizesUpdated', msg => { state = msg.state; if (!state.history) state.history = []; renderAll(); });
-  wsManager.on('resetDone', msg => { state = msg.state; if (!state.history) state.history = []; renderAll(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
+  wsManager.on('prizesUpdated', msg => { state = msg.state; renderAll(); });
+  wsManager.on('resetDone', msg => { state = msg.state; renderAll(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
   wsManager.on('error', msg => { showToast(toastEl, msg.message, 'error'); resetDrawUI(); });
+  wsManager.on('sessionChanged', msg => { state = msg.state; renderAll(); showToast(toastEl, '活动已切换'); });
 
   init();
 
@@ -72,9 +81,10 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   function renderAll() { renderPrizeTabs(); renderDrawnList(); renderResults(); }
 
   function renderPrizeTabs() {
-    if (state.prizes.length === 0) { prizeTabsEl.innerHTML = '<span style="color:var(--color-text-muted)">暂无奖项，请在管理后台配置</span>'; return; }
-    if (selectedPrizeIndex >= state.prizes.length) selectedPrizeIndex = 0;
-    prizeTabsEl.innerHTML = state.prizes.map((p, i) => {
+    const prizes = getSessionState(state).prizes || [];
+    if (prizes.length === 0) { prizeTabsEl.innerHTML = '<span style="color:var(--color-text-muted)">暂无奖项，请在管理后台配置</span>'; return; }
+    if (selectedPrizeIndex >= prizes.length) selectedPrizeIndex = 0;
+    prizeTabsEl.innerHTML = prizes.map((p, i) => {
       const remaining = p.total - p.drawn.length;
       const isFull = remaining <= 0;
       const cls = ['prize-tab', i === selectedPrizeIndex ? 'active' : '', isFull ? 'full' : '', p.isConsolation ? 'consolation' : ''].filter(Boolean).join(' ');
@@ -84,17 +94,20 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   }
 
   function renderDrawnList() {
-    const prize = state.prizes[selectedPrizeIndex];
+    const prizes = getSessionState(state).prizes || [];
+    const prize = prizes[selectedPrizeIndex];
     if (!prize || prize.drawn.length === 0) { drawnListEl.innerHTML = ''; return; }
     drawnListEl.innerHTML = `<h3>${escapeHtml(prize.name)} 已中奖</h3><div class="drawn-names">${prize.drawn.map(n => `<span class="drawn-name-badge">${escapeHtml(n)}</span>`).join('')}</div>`;
   }
 
   function renderResults() {
-    const hasDrawn = state.prizes.some(p => p.drawn.length > 0);
-    const history = state.history || [];
+    const session = getSessionState(state);
+    const prizes = session.prizes || [];
+    const history = session.history || [];
+    const hasDrawn = prizes.some(p => p.drawn.length > 0);
     if (!hasDrawn && history.length === 0) { resultsSummaryEl.innerHTML = '<p style="color:var(--color-text-muted);text-align:center">暂无中奖记录</p>'; return; }
     let html = '';
-    if (hasDrawn) html += state.prizes.filter(p => p.drawn.length > 0).map(p => `<div class="result-group"><h3>🏆 ${escapeHtml(p.name)}</h3><ul>${p.drawn.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul></div>`).join('');
+    if (hasDrawn) html += prizes.filter(p => p.drawn.length > 0).map(p => `<div class="result-group"><h3>🏆 ${escapeHtml(p.name)}</h3><ul>${p.drawn.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul></div>`).join('');
     if (history.length > 0) {
       html += '<div class="result-group"><h3>📋 抽奖记录</h3><ul class="history-list">';
       history.slice().reverse().forEach(h => { const time = new Date(h.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); html += `<li class="history-item"><span class="history-time">${time}</span> ${escapeHtml(h.prizeName)} → ${h.winners.map(w => escapeHtml(w)).join('、')}</li>`; });
@@ -106,7 +119,8 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   function resetDrawUI() { stopRollingAnimation(); isDrawing = false; isRolling = false; isDrawInitiator = false; btnDraw.disabled = false; btnDraw.textContent = '🎯 开始抽奖'; }
 
   function startDraw() {
-    const prize = state.prizes[selectedPrizeIndex];
+    const prizes = getSessionState(state).prizes || [];
+    const prize = prizes[selectedPrizeIndex];
     if (!prize) { showToast(toastEl, '请先选择奖项', 'error'); return; }
     const remaining = prize.total - prize.drawn.length;
     if (remaining <= 0) { showToast(toastEl, `"${prize.name}" 名额已满`, 'error'); return; }
@@ -117,7 +131,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     }
     if (isDrawing) return;
     const allDrawn = new Set();
-    state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
+    prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
     let candidates = nameList.filter(n => !allDrawn.has(n));
     if (!prize.isConsolation) candidates = candidates.filter(n => !hqPool.has(n));
     if (candidates.length === 0) { showToast(toastEl, '没有可供抽奖的候选人', 'error'); return; }
@@ -157,7 +171,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   function stopRollingAnimation() { if (rollRAF) { cancelAnimationFrame(rollRAF); rollRAF = null; } rollingNameEl.classList.remove('animating'); }
 
   function handleDrawResult(msg) {
-    const winners = msg.winners; state = msg.state; if (!state.history) state.history = []; renderAll();
+    const winners = msg.winners; state = msg.state; renderAll();
     if (isDrawInitiator) {
       stopRollingAnimation(); playWinSound();
       rollingNameEl.textContent = winners.length === 1 ? winners[0] : winners.join('、');
@@ -227,7 +241,9 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     if (btnExport) btnExport.addEventListener('click', () => {
       const useExcel = confirm('点击"确定"导出 Excel，点击"取消"导出文本文件');
       if (useExcel) {
-        window.open('/api/export?format=xlsx', '_blank');
+        const token = sessionStorage.getItem('adminToken') || '';
+        const sep = token ? '&' : '';
+        window.open(`/api/export?format=xlsx${sep}token=${encodeURIComponent(token)}`, '_blank');
         showToast(toastEl, 'Excel 文件已下载');
       } else {
         if (!exportToText(state)) showToast(toastEl, '暂无中奖记录可导出');

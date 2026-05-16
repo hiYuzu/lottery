@@ -496,7 +496,7 @@ async function handleUndo(ws) {
 
 // ==================== 鉴权 REST API ====================
 
-app.post('/api/login', express.json(), (req, res) => {
+app.post('/api/login', (req, res) => {
   const password = req.body && req.body.password;
   if (!password || stripHtml(password) !== ADMIN_PASSWORD) {
     return res.status(401).json({ success: false, message: '密码错误' });
@@ -515,12 +515,17 @@ function isAdmin(ws) {
 }
 
 // ==================== REST API ====================
-app.get('/api/names', async (_req, res) => {
+app.get('/api/names', async (req, res) => {
   const data = await readJSON(LIST_FILE, { name: [] });
-  res.json(data);
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (verifyToken(token)) {
+    res.json(data);
+  } else {
+    res.json({ name: (data.name || []).map(n => ({ name: n.name })) });
+  }
 });
 
-app.put('/api/names', express.json(), async (req, res) => {
+app.put('/api/names', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!verifyToken(token)) {
     return res.status(401).json({ error: '需要管理员权限' });
@@ -545,10 +550,6 @@ app.put('/api/names', express.json(), async (req, res) => {
 });
 
 app.get('/api/export', async (req, res) => {
-  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) {
-    return res.status(401).json({ error: '需要管理员权限' });
-  }
   const format = req.query.format || 'txt';
   const { state: fullState, session } = getCurrentSession();
 
@@ -655,7 +656,9 @@ app.post('/api/upload', (req, res, next) => {
 
 // ==================== 会话管理 ====================
 
-app.get('/api/sessions', (_req, res) => {
+app.get('/api/sessions', (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
   const state = loadStateWithSessions();
   const sessions = Object.keys(state.sessions).map(key => ({
     key, name: key,
@@ -665,32 +668,36 @@ app.get('/api/sessions', (_req, res) => {
   res.json({ current: state.currentSession, sessions });
 });
 
-app.post('/api/sessions', express.json(), (req, res) => {
+app.post('/api/sessions', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
   const name = stripHtml(req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: '活动名称不能为空' });
-  const state = loadStateWithSessions();
-  if (state.sessions[name]) return res.status(400).json({ error: '活动已存在' });
-  state.sessions[name] = { prizes: [], history: [] };
-  state.currentSession = name;
-  cachedState = state;
-  writeJSON(STATE_FILE, state);
-  broadcast({ type: 'sessionChanged', state, sessionName: name });
-  res.json({ success: true });
+  withLock(async () => {
+    const state = loadStateWithSessions();
+    if (state.sessions[name]) return res.status(400).json({ error: '活动已存在' });
+    state.sessions[name] = { prizes: [], history: [] };
+    state.currentSession = name;
+    cachedState = state;
+    await writeJSON(STATE_FILE, state);
+    broadcast({ type: 'sessionChanged', state, sessionName: name });
+    res.json({ success: true });
+  }).catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.put('/api/sessions/switch', express.json(), (req, res) => {
+app.put('/api/sessions/switch', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
   const name = req.body.name;
-  const state = loadStateWithSessions();
-  if (!state.sessions[name]) return res.status(404).json({ error: '活动不存在' });
-  state.currentSession = name;
-  cachedState = state;
-  writeJSON(STATE_FILE, state);
-  broadcast({ type: 'sessionChanged', state, sessionName: name });
-  res.json({ success: true });
+  withLock(async () => {
+    const state = loadStateWithSessions();
+    if (!state.sessions[name]) return res.status(404).json({ error: '活动不存在' });
+    state.currentSession = name;
+    cachedState = state;
+    await writeJSON(STATE_FILE, state);
+    broadcast({ type: 'sessionChanged', state, sessionName: name });
+    res.json({ success: true });
+  }).catch(err => res.status(500).json({ error: err.message }));
 });
 
 // ==================== 启动服务 ====================
