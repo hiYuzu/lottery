@@ -212,6 +212,15 @@ function broadcast(data) {
 wss.on('connection', ws => {
   console.log('[WS] 新客户端连接，当前连接数:', wss.clients.size);
 
+  // 解析 URL 中的 token 参数
+  try {
+    const url = new URL(ws.upgradeReq.url, `http://${ws.upgradeReq.headers.host}`);
+    const token = url.searchParams.get('token');
+    ws._isAdmin = verifyToken(token);
+  } catch {
+    ws._isAdmin = false;
+  }
+
   // 连接建立后立即发送当前完整状态
   ws.send(JSON.stringify({ type: 'init', state: loadState() }));
 
@@ -219,6 +228,7 @@ wss.on('connection', ws => {
     let msg;
     try {
       msg = JSON.parse(raw);
+      msg = sanitizeMessage(msg);
     } catch {
       ws.send(JSON.stringify({ type: 'error', message: '无效的消息格式' }));
       return;
@@ -226,6 +236,18 @@ wss.on('connection', ws => {
 
     try {
       switch (msg.type) {
+        // -------- 登录 --------
+        case 'login': {
+          const pwd = msg.password;
+          if (!pwd || stripHtml(pwd) !== ADMIN_PASSWORD) {
+            ws.send(JSON.stringify({ type: 'loginResult', success: false }));
+            return;
+          }
+          ws._isAdmin = true;
+          const token = generateToken();
+          ws.send(JSON.stringify({ type: 'loginResult', success: true, token }));
+          break;
+        }
         // -------- 抽奖 --------
         case 'draw': {
           await withLock(() => handleDraw(ws, msg));
@@ -233,11 +255,19 @@ wss.on('connection', ws => {
         }
         // -------- 更新奖项配置 --------
         case 'updatePrizes': {
+          if (!isAdmin(ws)) {
+            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
+            break;
+          }
           await withLock(() => handleUpdatePrizes(ws, msg));
           break;
         }
         // -------- 重置抽奖 --------
         case 'reset': {
+          if (!isAdmin(ws)) {
+            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
+            break;
+          }
           await withLock(() => handleReset(ws));
           break;
         }
@@ -388,6 +418,26 @@ async function handleReset(ws) {
   state.history = [];
   await saveState(state);
   broadcast({ type: 'resetDone', state });
+}
+
+// ==================== 鉴权 REST API ====================
+
+app.post('/api/login', express.json(), (req, res) => {
+  const password = req.body && req.body.password;
+  if (!password || stripHtml(password) !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, message: '密码错误' });
+  }
+  const token = generateToken();
+  res.json({ success: true, token });
+});
+
+app.get('/api/verify', (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  res.json({ valid: verifyToken(token) });
+});
+
+function isAdmin(ws) {
+  return ws._isAdmin === true;
 }
 
 // ==================== REST API ====================
