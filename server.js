@@ -279,6 +279,15 @@ wss.on('connection', ws => {
           await withLock(() => handleReset(ws));
           break;
         }
+        // -------- 撤销上一次抽奖 --------
+        case 'undo': {
+          if (!isAdmin(ws)) {
+            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
+            break;
+          }
+          await withLock(() => handleUndo(ws));
+          break;
+        }
         default:
           ws.send(JSON.stringify({ type: 'error', message: `未知消息类型: ${msg.type}` }));
       }
@@ -428,6 +437,34 @@ async function handleReset(ws) {
   state.history = [];
   await saveState(state);
   broadcast({ type: 'resetDone', state });
+}
+
+/** 处理撤销上一次抽奖 */
+async function handleUndo(ws) {
+  const state = loadState();
+  if (!state.history || state.history.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: '没有可撤销的抽奖记录' }));
+    return;
+  }
+
+  const last = state.history[state.history.length - 1];
+  const prize = state.prizes.find(p => p.name === last.prizeName);
+
+  if (!prize) {
+    ws.send(JSON.stringify({ type: 'error', message: `奖项 "${last.prizeName}" 已不存在，无法撤销` }));
+    return;
+  }
+
+  // 从 prize.drawn 中移除中奖者
+  for (const winner of last.winners) {
+    const idx = prize.drawn.indexOf(winner);
+    if (idx !== -1) prize.drawn.splice(idx, 1);
+  }
+
+  state.history.pop();
+  await saveState(state);
+
+  broadcast({ type: 'undoResult', state });
 }
 
 // ==================== 鉴权 REST API ====================
