@@ -237,12 +237,12 @@ function broadcastOnlineCount() {
   broadcast({ type: 'onlineCount', count: wss.clients.size });
 }
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
   console.log('[WS] 新客户端连接，当前连接数:', wss.clients.size);
 
   // 解析 URL 中的 token 参数
   try {
-    const url = new URL(ws.upgradeReq.url, `http://${ws.upgradeReq.headers.host}`);
+    const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
     ws._isAdmin = verifyToken(token);
   } catch {
@@ -467,14 +467,14 @@ async function handleReset(ws) {
 
 /** 处理撤销上一次抽奖 */
 async function handleUndo(ws) {
-  const state = loadState();
-  if (!state.history || state.history.length === 0) {
+  const { state, session, key } = getCurrentSession();
+  if (!session.history || session.history.length === 0) {
     ws.send(JSON.stringify({ type: 'error', message: '没有可撤销的抽奖记录' }));
     return;
   }
 
-  const last = state.history[state.history.length - 1];
-  const prize = state.prizes.find(p => p.name === last.prizeName);
+  const last = session.history[session.history.length - 1];
+  const prize = session.prizes.find(p => p.name === last.prizeName);
 
   if (!prize) {
     ws.send(JSON.stringify({ type: 'error', message: `奖项 "${last.prizeName}" 已不存在，无法撤销` }));
@@ -487,7 +487,8 @@ async function handleUndo(ws) {
     if (idx !== -1) prize.drawn.splice(idx, 1);
   }
 
-  state.history.pop();
+  session.history.pop();
+  state.sessions[key] = session;
   await saveState(state);
 
   broadcast({ type: 'undoResult', state });
@@ -549,19 +550,22 @@ app.get('/api/export', async (req, res) => {
     return res.status(401).json({ error: '需要管理员权限' });
   }
   const format = req.query.format || 'txt';
-  const state = loadState();
+  const { state: fullState, session } = getCurrentSession();
 
   if (format === 'xlsx') {
     const XLSX = require('xlsx');
     const wb = XLSX.utils.book_new();
 
-    const summaryData = state.prizes
+    const prizes = session.prizes || [];
+    const history = session.history || [];
+
+    const summaryData = prizes
       .filter(p => p.drawn.length > 0)
       .flatMap(p => p.drawn.map((name, i) => ({ '奖项': p.name, '中奖者': name, '序号': i + 1 })));
     const ws1 = XLSX.utils.json_to_sheet(summaryData);
     XLSX.utils.book_append_sheet(wb, ws1, '中奖汇总');
 
-    const historyData = (state.history || []).map(h => ({
+    const historyData = history.map(h => ({
       '时间': new Date(h.time).toLocaleString('zh-CN'),
       '奖项': h.prizeName,
       '中奖者': h.winners.join('、'),
@@ -647,6 +651,46 @@ app.post('/api/upload', (req, res, next) => {
     if (files.music) result.music = files.music[0].filename;
     res.json({ success: true, ...result });
   });
+});
+
+// ==================== 会话管理 ====================
+
+app.get('/api/sessions', (_req, res) => {
+  const state = loadStateWithSessions();
+  const sessions = Object.keys(state.sessions).map(key => ({
+    key, name: key,
+    drawCount: (state.sessions[key].history || []).length,
+    prizeCount: (state.sessions[key].prizes || []).length,
+  }));
+  res.json({ current: state.currentSession, sessions });
+});
+
+app.post('/api/sessions', express.json(), (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
+  const name = stripHtml(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: '活动名称不能为空' });
+  const state = loadStateWithSessions();
+  if (state.sessions[name]) return res.status(400).json({ error: '活动已存在' });
+  state.sessions[name] = { prizes: [], history: [] };
+  state.currentSession = name;
+  cachedState = state;
+  writeJSON(STATE_FILE, state);
+  broadcast({ type: 'sessionChanged', state, sessionName: name });
+  res.json({ success: true });
+});
+
+app.put('/api/sessions/switch', express.json(), (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
+  const name = req.body.name;
+  const state = loadStateWithSessions();
+  if (!state.sessions[name]) return res.status(404).json({ error: '活动不存在' });
+  state.currentSession = name;
+  cachedState = state;
+  writeJSON(STATE_FILE, state);
+  broadcast({ type: 'sessionChanged', state, sessionName: name });
+  res.json({ success: true });
 });
 
 // ==================== 启动服务 ====================
