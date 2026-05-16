@@ -616,6 +616,46 @@ body.page-scrollable {
   .panel-draw {
     min-height: 400px;
   }
+  .btn-draw-action {
+    padding: 12px 32px;
+    font-size: 16px;
+  }
+  .rolling-name {
+    font-size: 28px;
+  }
+  .prize-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+  }
+  .prize-tab {
+    font-size: 13px;
+    padding: 6px 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .toolbar .title {
+    font-size: 16px;
+    letter-spacing: 1px;
+  }
+  .winner-name {
+    font-size: 36px;
+  }
+  .winner-modal {
+    min-width: auto;
+    width: 90vw;
+  }
+  .display-prize-name {
+    font-size: 32px;
+  }
+  .display-rolling {
+    font-size: 48px;
+  }
+  .display-stage {
+    height: 200px;
+    width: 95%;
+  }
 }
 
 /* ==================== 焦点样式（键盘导航） ==================== */
