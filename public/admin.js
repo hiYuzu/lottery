@@ -17,6 +17,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   let hqPool = new Set();
   let editorData = [];
   let hasUnsavedChanges = false;
+  let nameDeptMap = {};
 
   function getToken() { return sessionStorage.getItem('adminToken'); }
 
@@ -32,11 +33,20 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   wsManager.on('resetDone', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '抽奖已重置'); });
   wsManager.on('drawResult', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); });
   wsManager.on('error', msg => showToast(toastEl, msg.message, 'error'));
+  wsManager.on('undoResult', msg => { state = msg.state; renderPrizeEditor(state.prizes.map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '已撤销上一次抽奖'); });
+  wsManager.on('onlineCount', msg => { let el = $('online-count'); if (!el) { el = document.createElement('span'); el.id = 'online-count'; el.className = 'online-count'; document.querySelector('.toolbar-actions').prepend(el); } el.textContent = `在线 ${msg.count} 人`; });
 
   init();
 
   function init() {
-    loadNameList().then(({ names, hqPool: hp }) => { nameList = names; hqPool = hp; renderNameList(); }).catch(() => showToast(toastEl, '加载名单失败', 'error'));
+    loadNameList().then(({ names, hqPool: hp }) => { nameList = names; hqPool = hp; }).catch(() => showToast(toastEl, '加载名单失败', 'error'));
+    fetch('/api/names').then(r => r.json()).then(data => {
+      const list = Array.isArray(data) ? data : (data.name || []);
+      nameList = list.map(item => item.name).filter(Boolean);
+      nameDeptMap = {};
+      list.forEach(item => { nameDeptMap[item.name] = item.dept || ''; });
+      renderNameList();
+    });
     bindEvents();
   }
 
@@ -45,9 +55,10 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   function renderNameList() {
     const allDrawn = new Set();
     state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
-    nameListEl.innerHTML = nameList.map(name => {
+    nameListEl.innerHTML = nameList.map((name, i) => {
       const isDrawn = allDrawn.has(name);
-      return `<span class="name-tag${isDrawn ? ' drawn' : ''}">${escapeHtml(name)}</span>`;
+      const dept = nameDeptMap[name] || '';
+      return `<span class="name-tag${isDrawn ? ' drawn' : ''}" data-index="${i}">${escapeHtml(name)}${dept ? ` (${dept})` : ''}<button class="name-remove" data-remove="${i}">×</button></span>`;
     }).join('');
   }
 
@@ -120,6 +131,40 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
 
   function resetLottery() { if (!confirm('确定要重置所有抽奖结果吗？此操作不可撤销。')) return; send({ type: 'reset' }); }
 
+  function undoLastDraw() { send({ type: 'undo' }); }
+
+  async function saveNameList() {
+    const list = nameList.map(name => ({ name, dept: nameDeptMap[name] || '' }));
+    const token = getToken();
+    const res = await fetch('/api/names', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify(list) });
+    if (!res.ok) { showToast(toastEl, '保存名单失败', 'error'); return false; }
+    showToast(toastEl, '名单已保存'); return true;
+  }
+
+  function addNameEntry() {
+    const nameInput = $('input-add-name'); const deptInput = $('input-add-dept');
+    const name = nameInput.value.trim(); if (!name) return;
+    nameList.push(name); nameDeptMap[name] = deptInput.value.trim();
+    nameInput.value = ''; deptInput.value = ''; renderNameList(); saveNameList();
+  }
+
+  function removeNameEntry(index) {
+    const name = nameList[index]; nameList.splice(index, 1); delete nameDeptMap[name];
+    renderNameList(); saveNameList();
+  }
+
+  function batchImport() {
+    const text = $('batch-input').value.trim(); if (!text) return;
+    const lines = text.split('\n').filter(l => l.trim());
+    for (const line of lines) {
+      const parts = line.split(',').map(s => s.trim());
+      const name = parts[0]; if (!name || nameList.includes(name)) continue;
+      nameList.push(name); nameDeptMap[name] = parts[1] || '';
+    }
+    renderNameList(); saveNameList();
+    $('batch-import-panel').classList.add('hidden'); $('batch-input').value = '';
+  }
+
   function bindEvents() {
     btnAddPrize.addEventListener('click', addPrizeRow);
     btnSavePrizes.addEventListener('click', savePrizes);
@@ -138,5 +183,10 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     prizeEditor.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removePrizeRow(parseInt(btn.dataset.remove, 10)); });
     prizeEditor.addEventListener('input', () => { hasUnsavedChanges = true; });
     window.addEventListener('beforeunload', e => { if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; } });
+    $('btn-add-name')?.addEventListener('click', addNameEntry);
+    $('btn-batch-import')?.addEventListener('click', () => $('batch-import-panel').classList.remove('hidden'));
+    $('btn-batch-cancel')?.addEventListener('click', () => $('batch-import-panel').classList.add('hidden'));
+    $('btn-batch-confirm')?.addEventListener('click', batchImport);
+    nameListEl.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removeNameEntry(parseInt(btn.dataset.remove, 10)); });
   }
 })();

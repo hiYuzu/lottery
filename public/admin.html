@@ -34,13 +34,25 @@
     <!-- 参与人员 -->
     <section class="panel admin-section">
       <h2>参与人员</h2>
+      <div class="name-toolbar">
+        <input type="text" id="input-add-name" placeholder="姓名" />
+        <input type="text" id="input-add-dept" placeholder="地区 (如 BJ)" style="width:80px" />
+        <button id="btn-add-name" class="btn btn-sm">添加</button>
+        <button id="btn-batch-import" class="btn btn-sm">批量导入</button>
+      </div>
       <div id="name-list" class="name-grid"></div>
+      <div id="batch-import-panel" class="hidden">
+        <textarea id="batch-input" placeholder="每行一个：姓名,地区&#10;例：张三,BJ&#10;李四,SD" rows="5"></textarea>
+        <button id="btn-batch-confirm" class="btn btn-primary btn-sm">确认导入</button>
+        <button id="btn-batch-cancel" class="btn btn-sm">取消</button>
+      </div>
     </section>
 
     <!-- 抽奖控制 -->
     <section class="panel admin-section">
       <h2>抽奖控制</h2>
       <div class="admin-actions">
+        <button id="btn-undo" class="btn btn-warning">↩️ 撤销上一次抽奖</button>
         <button id="btn-reset" class="btn btn-danger">🔄 重置所有抽奖结果</button>
       </div>
       <p class="admin-hint">重置将清空所有奖项的中奖记录，此操作不可撤销。</p>
