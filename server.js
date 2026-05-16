@@ -11,11 +11,71 @@ const { WebSocketServer } = require('ws');
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 
 // ==================== 配置 ====================
 const PORT = 3000;
 const STATE_FILE = path.join(__dirname, 'state.json');
 const LIST_FILE = path.join(__dirname, 'public', 'data', 'list.json');
+
+// ==================== 鉴权常量与工具函数 ====================
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const HMAC_SECRET_FILE = path.join(__dirname, '.secret');
+const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+
+if (ADMIN_PASSWORD === 'admin123') {
+  console.log('[警告] 使用默认管理员密码，请设置环境变量 ADMIN_PASSWORD');
+}
+
+let hmacSecret = null;
+
+function getHmacSecret() {
+  if (hmacSecret) return hmacSecret;
+  try {
+    hmacSecret = fs.readFileSync(HMAC_SECRET_FILE, 'utf-8').trim();
+  } catch {
+    hmacSecret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(HMAC_SECRET_FILE, hmacSecret, 'utf-8');
+  }
+  return hmacSecret;
+}
+
+function generateToken() {
+  const payload = { ts: Date.now(), rand: crypto.randomBytes(8).toString('hex') };
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64');
+  const sig = crypto.createHmac('sha256', getHmacSecret()).update(data).digest('hex');
+  return `${data}.${sig}`;
+}
+
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const [data, sig] = token.split('.');
+  if (!data || !sig) return false;
+  const expected = crypto.createHmac('sha256', getHmacSecret()).update(data).digest('hex');
+  if (sig !== expected) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'));
+    return Date.now() - payload.ts < TOKEN_MAX_AGE;
+  } catch {
+    return false;
+  }
+}
+
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '');
+}
+
+function sanitizeMessage(msg) {
+  if (msg.prizeName && typeof msg.prizeName === 'string') msg.prizeName = stripHtml(msg.prizeName);
+  if (msg.password && typeof msg.password === 'string') msg.password = stripHtml(msg.password);
+  if (Array.isArray(msg.prizes)) {
+    msg.prizes.forEach(p => {
+      if (p.name && typeof p.name === 'string') p.name = stripHtml(p.name);
+    });
+  }
+  return msg;
+}
 
 // ==================== Express 静态服务 ====================
 const app = express();
