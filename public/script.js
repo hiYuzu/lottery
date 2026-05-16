@@ -163,7 +163,16 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   function bindEvents() {
     btnDraw.addEventListener('click', startDraw);
     btnMusic.addEventListener('click', toggleMusic);
-    if (btnExport) btnExport.addEventListener('click', () => { if (!exportToText(state)) showToast(toastEl, '暂无中奖记录可导出'); else showToast(toastEl, '结果已导出'); });
+    if (btnExport) btnExport.addEventListener('click', () => {
+      const useExcel = confirm('点击"确定"导出 Excel，点击"取消"导出文本文件');
+      if (useExcel) {
+        window.open('/api/export?format=xlsx', '_blank');
+        showToast(toastEl, 'Excel 文件已下载');
+      } else {
+        if (!exportToText(state)) showToast(toastEl, '暂无中奖记录可导出');
+        else showToast(toastEl, '结果已导出');
+      }
+    });
     prizeTabsEl.addEventListener('click', e => { const tab = e.target.closest('.prize-tab'); if (!tab || tab.classList.contains('full')) return; if (isDrawing || isRolling) { showToast(toastEl, '抽奖进行中，无法切换奖项', 'error'); return; } selectedPrizeIndex = parseInt(tab.dataset.index, 10); renderPrizeTabs(); renderDrawnList(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
     btnCloseWinner.addEventListener('click', () => modalWinner.classList.add('hidden'));
     modalWinner.addEventListener('click', e => { if (e.target === modalWinner) modalWinner.classList.add('hidden'); });
