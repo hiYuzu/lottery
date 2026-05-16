@@ -452,8 +452,67 @@ function isAdmin(ws) {
 
 // ==================== REST API ====================
 app.get('/api/names', async (_req, res) => {
-  const { names } = await loadNameList();
-  res.json({ names });
+  const data = await readJSON(LIST_FILE, { name: [] });
+  res.json(data);
+});
+
+app.put('/api/names', express.json(), async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) {
+    return res.status(401).json({ error: '需要管理员权限' });
+  }
+  const list = req.body;
+  if (!Array.isArray(list)) {
+    return res.status(400).json({ error: '数据格式错误，需要数组' });
+  }
+  for (const item of list) {
+    if (!item.name || typeof item.name !== 'string') {
+      return res.status(400).json({ error: '每个条目必须有 name 字段' });
+    }
+    item.name = stripHtml(item.name).trim();
+    if (item.dept && typeof item.dept === 'string') {
+      item.dept = stripHtml(item.dept).trim();
+    }
+  }
+  const data = { name: list };
+  await writeJSON(LIST_FILE, data);
+  _cachedNameList = null;
+  res.json({ success: true });
+});
+
+app.get('/api/export', async (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) {
+    return res.status(401).json({ error: '需要管理员权限' });
+  }
+  const format = req.query.format || 'txt';
+  const state = loadState();
+
+  if (format === 'xlsx') {
+    const XLSX = require('xlsx');
+    const wb = XLSX.utils.book_new();
+
+    const summaryData = state.prizes
+      .filter(p => p.drawn.length > 0)
+      .flatMap(p => p.drawn.map((name, i) => ({ '奖项': p.name, '中奖者': name, '序号': i + 1 })));
+    const ws1 = XLSX.utils.json_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, ws1, '中奖汇总');
+
+    const historyData = (state.history || []).map(h => ({
+      '时间': new Date(h.time).toLocaleString('zh-CN'),
+      '奖项': h.prizeName,
+      '中奖者': h.winners.join('、'),
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(historyData);
+    XLSX.utils.book_append_sheet(wb, ws2, '抽奖记录');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=lottery_${Date.now()}.xlsx`);
+    res.send(buf);
+  } else {
+    res.status(400).json({ error: '不支持的格式，请使用 format=xlsx' });
+  }
 });
 
 // ==================== 启动服务 ====================
