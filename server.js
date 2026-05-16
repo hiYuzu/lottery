@@ -447,8 +447,9 @@ async function handleUpdatePrizes(ws, msg) {
     }
   }
 
-  const oldState = loadState();
-  const state = { prizes, history: oldState.history || [] };
+  const { state, session, key } = getCurrentSession();
+  session.prizes = prizes;
+  state.sessions[key] = session;
   await saveState(state);
 
   broadcast({ type: 'prizesUpdated', state });
@@ -456,9 +457,10 @@ async function handleUpdatePrizes(ws, msg) {
 
 /** 处理重置 */
 async function handleReset(ws) {
-  const state = loadState();
-  state.prizes.forEach(p => (p.drawn = []));
-  state.history = [];
+  const { state, session, key } = getCurrentSession();
+  session.prizes.forEach(p => (p.drawn = []));
+  session.history = [];
+  state.sessions[key] = session;
   await saveState(state);
   broadcast({ type: 'resetDone', state });
 }
