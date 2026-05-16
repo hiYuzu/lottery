@@ -639,3 +639,47 @@ input:focus-visible {
     transform: none;
   }
 }
+
+/* ==================== 登录页 ==================== */
+.login-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.login-card h1 {
+  font-size: 24px;
+  margin-bottom: 24px;
+}
+.login-card input {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-card-border);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text);
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+.btn-login {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+}
+.login-error {
+  color: #ff6b6b;
+  font-size: 14px;
+  margin-top: 12px;
+}
+.login-back {
+  display: inline-block;
+  margin-top: 16px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}

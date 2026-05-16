@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理员登录</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="page-scrollable">
+  <div id="bg-layer"></div>
+  <main class="login-container">
+    <div class="login-card panel">
+      <h1>🔐 管理员登录</h1>
+      <form id="login-form">
+        <input type="password" id="input-password" placeholder="请输入管理员密码" autofocus required />
+        <button type="submit" class="btn btn-primary btn-login">登录</button>
+      </form>
+      <div id="login-error" class="login-error hidden"></div>
+      <a href="/" class="login-back">返回抽奖页</a>
+    </div>
+  </main>
+  <script>
+  (function() {
+    'use strict';
+    const form = document.getElementById('login-form');
+    const input = document.getElementById('input-password');
+    const errorEl = document.getElementById('login-error');
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      errorEl.classList.add('hidden');
+      const password = input.value;
+      if (!password) return;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          sessionStorage.setItem('adminToken', data.token);
+          location.href = '/admin.html';
+        } else {
+          errorEl.textContent = '密码错误';
+          errorEl.classList.remove('hidden');
+        }
+      } catch {
+        errorEl.textContent = '网络错误';
+        errorEl.classList.remove('hidden');
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
