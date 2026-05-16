@@ -190,5 +190,20 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     $('btn-batch-cancel')?.addEventListener('click', () => $('batch-import-panel').classList.add('hidden'));
     $('btn-batch-confirm')?.addEventListener('click', batchImport);
     nameListEl.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removeNameEntry(parseInt(btn.dataset.remove, 10)); });
+    // 音效上传
+    $('btn-upload-bg')?.addEventListener('click', async () => {
+      const file = $('upload-bg-music')?.files[0]; if (!file) return;
+      const formData = new FormData(); formData.append('music', file);
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Authorization': `Bearer ${getToken()}` }, body: formData });
+      const data = await res.json();
+      showToast(toastEl, data.success ? '背景音乐已更新，刷新页面生效' : '上传失败', data.success ? '' : 'error');
+    });
+    $('btn-upload-win')?.addEventListener('click', async () => {
+      const file = $('upload-win-music')?.files[0]; if (!file) return;
+      const formData = new FormData(); formData.append('music', file);
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Authorization': `Bearer ${getToken()}` }, body: formData });
+      const data = await res.json();
+      showToast(toastEl, data.success ? '中奖音效已更新，刷新页面生效' : '上传失败', data.success ? '' : 'error');
+    });
   }
 })();

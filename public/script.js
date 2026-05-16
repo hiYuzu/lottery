@@ -237,6 +237,21 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     prizeTabsEl.addEventListener('click', e => { const tab = e.target.closest('.prize-tab'); if (!tab || tab.classList.contains('full')) return; if (isDrawing || isRolling) { showToast(toastEl, '抽奖进行中，无法切换奖项', 'error'); return; } selectedPrizeIndex = parseInt(tab.dataset.index, 10); renderPrizeTabs(); renderDrawnList(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
     btnCloseWinner.addEventListener('click', () => modalWinner.classList.add('hidden'));
     modalWinner.addEventListener('click', e => { if (e.target === modalWinner) modalWinner.classList.add('hidden'); });
+    const btnQR = $('btn-qr');
+    if (btnQR) {
+      btnQR.addEventListener('click', () => {
+        let modal = document.querySelector('.qr-modal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.className = 'modal qr-modal';
+          modal.innerHTML = `<div class="modal-content" style="text-align:center;padding:20px;"><h3 style="margin-bottom:12px;">扫码参与抽奖</h3><img src="/api/qrcode" alt="QR Code" style="background:#fff;padding:12px;border-radius:8px;" /><p style="margin-top:10px;color:var(--color-text-muted);font-size:14px;">扫描二维码打开抽奖页面</p><button class="btn" style="margin-top:12px;" onclick="this.closest('.modal').classList.add('hidden')">关闭</button></div>`;
+          modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+          document.body.appendChild(modal);
+        } else {
+          modal.classList.remove('hidden');
+        }
+      });
+    }
     document.addEventListener('keydown', e => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.code === 'Space') { e.preventDefault(); startDraw(); }

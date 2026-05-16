@@ -873,3 +873,40 @@ input:focus-visible {
 .btn-warning:hover {
   background: rgba(241, 196, 15, 0.2);
 }
+
+/* ==================== 文件上传 ==================== */
+.upload-label {
+  cursor: pointer;
+  position: relative;
+}
+.upload-label input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.prize-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.sound-upload-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sound-upload-grid div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sound-upload-grid label {
+  font-size: 14px;
+  min-width: 80px;
+}
+.sound-upload-grid input[type="file"] {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}

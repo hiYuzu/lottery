@@ -172,6 +172,29 @@ async function saveState(state) {
   await writeJSON(STATE_FILE, state);
 }
 
+// ==================== 多会话支持 ====================
+
+function migrateToSessions(state) {
+  if (state.sessions) return state;
+  return {
+    currentSession: 'default',
+    sessions: { default: { prizes: state.prizes || [], history: state.history || [] } },
+  };
+}
+
+function loadStateWithSessions() {
+  let state = loadState();
+  state = migrateToSessions(state);
+  cachedState = state;
+  return JSON.parse(JSON.stringify(state));
+}
+
+function getCurrentSession() {
+  const state = loadStateWithSessions();
+  const key = state.currentSession;
+  return { state, session: state.sessions[key], key };
+}
+
 // ==================== 全局互斥锁（防止并发状态修改） ====================
 
 let _mutexQueue = Promise.resolve();
@@ -227,7 +250,7 @@ wss.on('connection', ws => {
   }
 
   // 连接建立后立即发送当前完整状态
-  ws.send(JSON.stringify({ type: 'init', state: loadState() }));
+  ws.send(JSON.stringify({ type: 'init', state: loadStateWithSessions() }));
 
   // 广播在线用户数量
   broadcastOnlineCount();
@@ -325,8 +348,8 @@ async function handleDraw(ws, msg) {
     return;
   }
 
-  const state = loadState();
-  const prize = state.prizes.find(p => p.name === prizeName);
+  const { state, session, key } = getCurrentSession();
+  const prize = session.prizes.find(p => p.name === prizeName);
 
   if (!prize) {
     ws.send(JSON.stringify({ type: 'error', message: `奖项 "${prizeName}" 不存在` }));
@@ -341,7 +364,7 @@ async function handleDraw(ws, msg) {
 
   // 计算候选人：名单中去除所有已中奖的人
   const allDrawn = new Set();
-  state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
+  session.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
 
   const { names, hqPool } = await loadNameList();
   let candidates = names.filter(n => !allDrawn.has(n));
@@ -369,13 +392,14 @@ async function handleDraw(ws, msg) {
   prize.drawn.push(...winners);
 
   // 记录抽奖历史
-  if (!state.history) state.history = [];
-  state.history.push({
+  if (!session.history) session.history = [];
+  session.history.push({
     prizeName,
     winners: [...winners],
     time: new Date().toISOString(),
   });
 
+  state.sessions[key] = session;
   await saveState(state);
 
   // 广播中奖结果和最新状态
@@ -550,6 +574,77 @@ app.get('/api/export', async (req, res) => {
   } else {
     res.status(400).json({ error: '不支持的格式，请使用 format=xlsx' });
   }
+});
+
+// ==================== 二维码 ====================
+
+let detectedIP = null;
+
+function detectLocalIP() {
+  const os = require('os');
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        detectedIP = iface.address;
+        return;
+      }
+    }
+  }
+  detectedIP = 'localhost';
+}
+detectLocalIP();
+
+app.get('/api/qrcode', async (_req, res) => {
+  const QRCode = require('qrcode');
+  const url = `http://${detectedIP}:${PORT}`;
+  try {
+    const svg = await QRCode.toString(url, { type: 'svg', width: 200 });
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(svg);
+  } catch (err) {
+    res.status(500).json({ error: '生成二维码失败' });
+  }
+});
+
+// ==================== 文件上传 ====================
+
+const multer = require('multer');
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const subDir = file.fieldname === 'music' ? 'music' : 'uploads';
+    const dir = path.join(__dirname, 'public', subDir);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+  },
+});
+const uploadMiddleware = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = { image: ['.jpg', '.jpeg', '.png'], music: ['.mp3'] };
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = allowed[file.fieldname] || allowed.image;
+    if (allowedExts.includes(ext)) cb(null, true);
+    else cb(new Error(`不支持的文件格式: ${ext}`));
+  },
+});
+
+app.post('/api/upload', (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
+  uploadMiddleware.fields([{ name: 'image', maxCount: 1 }, { name: 'music', maxCount: 1 }])(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    const files = req.files;
+    const result = {};
+    if (files.image) result.image = files.image[0].filename;
+    if (files.music) result.music = files.music[0].filename;
+    res.json({ success: true, ...result });
+  });
 });
 
 // ==================== 启动服务 ====================
