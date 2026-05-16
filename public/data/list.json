@@ -1,24 +1,84 @@
 {
   "name": [
-    { "name": "张三", "dept": "CN" },
-    { "name": "李四", "dept": "CN" },
-    { "name": "王五", "dept": "CN" },
-    { "name": "赵六", "dept": "BJ" },
-    { "name": "孙七", "dept": "SD" },
-    { "name": "周八", "dept": "BJ" },
-    { "name": "吴九", "dept": "HB" },
-    { "name": "郑十", "dept": "SC" },
-    { "name": "冯十一", "dept": "GD" },
-    { "name": "陈十二", "dept": "BJ" },
-    { "name": "褚十三", "dept": "SD" },
-    { "name": "卫十四", "dept": "HB" },
-    { "name": "蒋十五", "dept": "GD" },
-    { "name": "沈十六", "dept": "SC" },
-    { "name": "韩十七", "dept": "BJ" },
-    { "name": "杨十八", "dept": "GD" },
-    { "name": "朱十九", "dept": "SD" },
-    { "name": "秦二十", "dept": "SC" },
-    { "name": "许二一", "dept": "HB" },
-    { "name": "何二二", "dept": "BJ" }
+    {
+      "name": "张三",
+      "dept": "CN"
+    },
+    {
+      "name": "李四",
+      "dept": "CN"
+    },
+    {
+      "name": "王五",
+      "dept": "CN"
+    },
+    {
+      "name": "赵六",
+      "dept": "BJ"
+    },
+    {
+      "name": "孙七",
+      "dept": "SD"
+    },
+    {
+      "name": "周八",
+      "dept": "BJ"
+    },
+    {
+      "name": "吴九",
+      "dept": "HB"
+    },
+    {
+      "name": "郑十",
+      "dept": "SC"
+    },
+    {
+      "name": "冯十一",
+      "dept": "GD"
+    },
+    {
+      "name": "陈十二",
+      "dept": "BJ"
+    },
+    {
+      "name": "褚十三",
+      "dept": "SD"
+    },
+    {
+      "name": "卫十四",
+      "dept": "HB"
+    },
+    {
+      "name": "蒋十五",
+      "dept": "GD"
+    },
+    {
+      "name": "沈十六",
+      "dept": "SC"
+    },
+    {
+      "name": "韩十七",
+      "dept": "BJ"
+    },
+    {
+      "name": "杨十八",
+      "dept": "GD"
+    },
+    {
+      "name": "朱十九",
+      "dept": "SD"
+    },
+    {
+      "name": "秦二十",
+      "dept": "SC"
+    },
+    {
+      "name": "许二一",
+      "dept": "HB"
+    },
+    {
+      "name": "何二二",
+      "dept": "BJ"
+    }
   ]
 }

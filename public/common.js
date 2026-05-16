@@ -131,12 +131,18 @@ export function createWS({ onMessage, onOpen, onClose, onError, getToken }) {
 }
 
 export function exportToText(state) {
-  const hasDrawn = state.prizes.some(p => p.drawn.length > 0);
-  const history = state.history || [];
+  // 提取当前会话数据
+  let session = state;
+  if (state.sessions && state.currentSession && state.sessions[state.currentSession]) {
+    session = state.sessions[state.currentSession];
+  }
+  const prizes = session.prizes || [];
+  const history = session.history || [];
+  const hasDrawn = prizes.some(p => p.drawn.length > 0);
   if (!hasDrawn && history.length === 0) return false;
 
   const lines = ['抽奖结果', ''];
-  state.prizes.filter(p => p.drawn.length > 0).forEach(p => {
+  prizes.filter(p => p.drawn.length > 0).forEach(p => {
     lines.push(`${p.name}: ${p.drawn.join('、')}`);
   });
   if (history.length > 0) {

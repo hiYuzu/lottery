@@ -19,11 +19,11 @@ const STATE_FILE = path.join(__dirname, 'state.json');
 const LIST_FILE = path.join(__dirname, 'public', 'data', 'list.json');
 
 // ==================== 鉴权常量与工具函数 ====================
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const HMAC_SECRET_FILE = path.join(__dirname, '.secret');
 const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
-if (ADMIN_PASSWORD === 'admin123') {
+if (ADMIN_PASSWORD === 'admin') {
   console.log('[警告] 使用默认管理员密码，请设置环境变量 ADMIN_PASSWORD');
 }
 
@@ -612,46 +612,6 @@ app.get('/api/qrcode', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: '生成二维码失败' });
   }
-});
-
-// ==================== 文件上传 ====================
-
-const multer = require('multer');
-const uploadStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const subDir = file.fieldname === 'music' ? 'music' : 'uploads';
-    const dir = path.join(__dirname, 'public', subDir);
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-  },
-});
-const uploadMiddleware = multer({
-  storage: uploadStorage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = { image: ['.jpg', '.jpeg', '.png'], music: ['.mp3'] };
-    const ext = path.extname(file.originalname).toLowerCase();
-    const allowedExts = allowed[file.fieldname] || allowed.image;
-    if (allowedExts.includes(ext)) cb(null, true);
-    else cb(new Error(`不支持的文件格式: ${ext}`));
-  },
-});
-
-app.post('/api/upload', (req, res, next) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
-  uploadMiddleware.fields([{ name: 'image', maxCount: 1 }, { name: 'music', maxCount: 1 }])(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    const files = req.files;
-    const result = {};
-    if (files.image) result.image = files.image[0].filename;
-    if (files.music) result.music = files.music[0].filename;
-    res.json({ success: true, ...result });
-  });
 });
 
 // ==================== 会话管理 ====================

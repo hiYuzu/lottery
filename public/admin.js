@@ -1,4 +1,4 @@
-import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToText } from './common.js';
+import { escapeHtml, showToast, createWS, exportToText } from './common.js';
 
 (function () {
   'use strict';
@@ -18,7 +18,6 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
 
   let state = { prizes: [], history: [] };
   let nameList = [];
-  let hqPool = new Set();
   let editorData = [];
   let hasUnsavedChanges = false;
   let nameDeptMap = {};
@@ -46,32 +45,20 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   wsManager.on('drawResult', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); });
   wsManager.on('error', msg => showToast(toastEl, msg.message, 'error'));
   wsManager.on('undoResult', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); showToast(toastEl, '已撤销上一次抽奖'); });
-  wsManager.on('sessionChanged', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); loadSessions(); showToast(toastEl, '活动已切换'); });
+  wsManager.on('sessionChanged', msg => { state = msg.state; renderPrizeEditor(getSessionPrizes(state).map(p => ({ ...p, drawn: [...p.drawn] }))); });
   wsManager.on('onlineCount', msg => { let el = $('online-count'); if (!el) { el = document.createElement('span'); el.id = 'online-count'; el.className = 'online-count'; document.querySelector('.toolbar-actions').prepend(el); } el.textContent = `在线 ${msg.count} 人`; });
 
   init();
 
   function init() {
-    loadNameList().then(({ names, hqPool: hp }) => { nameList = names; hqPool = hp; }).catch(() => showToast(toastEl, '加载名单失败', 'error'));
     fetch(`/api/names?token=${encodeURIComponent(getToken())}`).then(r => r.json()).then(data => {
       const list = Array.isArray(data) ? data : (data.name || []);
       nameList = list.map(item => item.name).filter(Boolean);
       nameDeptMap = {};
       list.forEach(item => { nameDeptMap[item.name] = item.dept || ''; });
       renderNameList();
-    });
-    loadSessions();
+    }).catch(() => showToast(toastEl, '加载名单失败', 'error'));
     bindEvents();
-  }
-
-  async function loadSessions() {
-    const res = await fetch(`/api/sessions?token=${encodeURIComponent(getToken())}`);
-    const data = await res.json();
-    const select = $('session-select');
-    if (!select) return;
-    select.innerHTML = data.sessions.map(s =>
-      `<option value="${escapeHtml(s.name)}" ${s.name === data.current ? 'selected' : ''}>${escapeHtml(s.name)} (${s.drawCount}次抽奖)</option>`
-    ).join('');
   }
 
   function send(msg) { wsManager.send(msg); }
@@ -81,8 +68,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     getSessionPrizes(state).forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
     nameListEl.innerHTML = nameList.map((name, i) => {
       const isDrawn = allDrawn.has(name);
-      const dept = nameDeptMap[name] || '';
-      return `<span class="name-tag${isDrawn ? ' drawn' : ''}" data-index="${i}">${escapeHtml(name)}${dept ? ` (${dept})` : ''}<button class="name-remove" data-remove="${i}">×</button></span>`;
+      return `<span class="name-tag${isDrawn ? ' drawn' : ''}" data-index="${i}">${escapeHtml(name)}<button class="name-remove" data-remove="${i}">×</button></span>`;
     }).join('');
   }
 
@@ -165,13 +151,6 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     showToast(toastEl, '名单已保存'); return true;
   }
 
-  function addNameEntry() {
-    const nameInput = $('input-add-name'); const deptInput = $('input-add-dept');
-    const name = nameInput.value.trim(); if (!name) return;
-    nameList.push(name); nameDeptMap[name] = deptInput.value.trim();
-    nameInput.value = ''; deptInput.value = ''; renderNameList(); saveNameList();
-  }
-
   function removeNameEntry(index) {
     const name = nameList[index]; nameList.splice(index, 1); delete nameDeptMap[name];
     renderNameList(); saveNameList();
@@ -186,7 +165,8 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
       nameList.push(name); nameDeptMap[name] = parts[1] || '';
     }
     renderNameList(); saveNameList();
-    $('batch-import-panel').classList.add('hidden'); $('batch-input').value = '';
+    $('batch-input').value = '';
+    showToast(toastEl, '名单已导入');
   }
 
   function bindEvents() {
@@ -209,38 +189,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     prizeEditor.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removePrizeRow(parseInt(btn.dataset.remove, 10)); });
     prizeEditor.addEventListener('input', () => { hasUnsavedChanges = true; });
     window.addEventListener('beforeunload', e => { if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; } });
-    $('btn-add-name')?.addEventListener('click', addNameEntry);
-    $('btn-batch-import')?.addEventListener('click', () => $('batch-import-panel').classList.remove('hidden'));
-    $('btn-batch-cancel')?.addEventListener('click', () => $('batch-import-panel').classList.add('hidden'));
     $('btn-batch-confirm')?.addEventListener('click', batchImport);
     nameListEl.addEventListener('click', e => { const btn = e.target.closest('[data-remove]'); if (btn) removeNameEntry(parseInt(btn.dataset.remove, 10)); });
-    // 活动管理
-    $('btn-switch-session')?.addEventListener('click', async () => {
-      const name = $('session-select')?.value; if (!name) return;
-      await fetch('/api/sessions/switch', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify({ name }) });
-      loadSessions();
-    });
-    $('btn-create-session')?.addEventListener('click', async () => {
-      const input = $('input-new-session'); const name = input?.value.trim(); if (!name) return;
-      const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify({ name }) });
-      const data = await res.json();
-      if (data.success) { input.value = ''; loadSessions(); showToast(toastEl, '活动已创建并切换'); }
-      else showToast(toastEl, data.error, 'error');
-    });
-    // 音效上传
-    $('btn-upload-bg')?.addEventListener('click', async () => {
-      const file = $('upload-bg-music')?.files[0]; if (!file) return;
-      const formData = new FormData(); formData.append('music', file);
-      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Authorization': `Bearer ${getToken()}` }, body: formData });
-      const data = await res.json();
-      showToast(toastEl, data.success ? '背景音乐已更新，刷新页面生效' : '上传失败', data.success ? '' : 'error');
-    });
-    $('btn-upload-win')?.addEventListener('click', async () => {
-      const file = $('upload-win-music')?.files[0]; if (!file) return;
-      const formData = new FormData(); formData.append('music', file);
-      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Authorization': `Bearer ${getToken()}` }, body: formData });
-      const data = await res.json();
-      showToast(toastEl, data.success ? '中奖音效已更新，刷新页面生效' : '上传失败', data.success ? '' : 'error');
-    });
   }
 })();

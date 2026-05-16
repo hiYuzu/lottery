@@ -1,4 +1,4 @@
-import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToText } from './common.js';
+import { escapeHtml, showToast, loadNameList, createWS, exportToText } from './common.js';
 
 (function () {
   'use strict';
@@ -30,7 +30,6 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   let isDrawInitiator = false;
   let rollRAF = null;
   let musicOn = false;
-  let countdownRAF = null;
 
   /** 从 state 中提取当前会话数据 */
   function getSessionState(st) {
@@ -51,7 +50,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   wsManager.on('prizesUpdated', msg => { state = msg.state; renderAll(); });
   wsManager.on('resetDone', msg => { state = msg.state; renderAll(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
   wsManager.on('error', msg => { showToast(toastEl, msg.message, 'error'); resetDrawUI(); });
-  wsManager.on('sessionChanged', msg => { state = msg.state; renderAll(); showToast(toastEl, '活动已切换'); });
+  wsManager.on('sessionChanged', msg => { state = msg.state; renderAll(); });
 
   init();
 
@@ -125,7 +124,6 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     const remaining = prize.total - prize.drawn.length;
     if (remaining <= 0) { showToast(toastEl, `"${prize.name}" 名额已满`, 'error'); return; }
     if (isRolling) {
-      if (countdownRAF) { clearTimeout(countdownRAF); countdownRAF = null; }
       isRolling = false; isDrawInitiator = true; btnDraw.disabled = true; btnDraw.textContent = '抽奖中...';
       send({ type: 'draw', prizeName: prize.name }); return;
     }
@@ -135,30 +133,9 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     let candidates = nameList.filter(n => !allDrawn.has(n));
     if (!prize.isConsolation) candidates = candidates.filter(n => !hqPool.has(n));
     if (candidates.length === 0) { showToast(toastEl, '没有可供抽奖的候选人', 'error'); return; }
-    isDrawing = true; btnDraw.disabled = true;
-    startCountdown(candidates);
-  }
-
-  function startCountdown(candidates) {
-    const steps = ['3', '2', '1'];
-    let stepIndex = 0;
-    rollingNameEl.classList.add('countdown');
-    rollingNameEl.classList.remove('animating', 'winner-reveal');
-    function tick() {
-      if (stepIndex < steps.length) {
-        rollingNameEl.textContent = steps[stepIndex];
-        rollingNameEl.classList.remove('countdown-pop');
-        void rollingNameEl.offsetWidth;
-        rollingNameEl.classList.add('countdown-pop');
-        stepIndex++;
-        countdownRAF = setTimeout(tick, 800);
-      } else {
-        rollingNameEl.classList.remove('countdown', 'countdown-pop');
-        isRolling = true; btnDraw.disabled = false; btnDraw.textContent = '⏹ 停止抽奖';
-        startRollingAnimation(candidates);
-      }
-    }
-    tick();
+    isDrawing = true; btnDraw.disabled = false; btnDraw.textContent = '⏹ 停止抽奖';
+    isRolling = true;
+    startRollingAnimation(candidates);
   }
 
   function startRollingAnimation(candidates) {
@@ -191,7 +168,6 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
       posterBtn.id = 'btn-poster';
       posterBtn.className = 'btn';
       posterBtn.textContent = '📸 生成海报';
-      posterBtn.style.marginTop = '10px';
       $('btn-close-winner').parentNode.insertBefore(posterBtn, $('btn-close-winner'));
       posterBtn.addEventListener('click', () => generatePoster(winnerPrizeEl.textContent, winnerNameEl.textContent));
     }

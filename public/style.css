@@ -11,9 +11,8 @@
   --color-primary-dark: #c0392b;
   --color-gold: #f1c40f;
   --color-gold-dark: #d4a90e;
-  --color-bg-overlay: rgba(0, 0, 0, 0);
-  --color-card: rgba(255, 255, 255, 0.12);
-  --color-card-border: rgba(255, 255, 255, 0.2);
+  --color-card: rgba(255, 255, 255, 0.07);
+  --color-card-border: rgba(255, 255, 255, 0.15);
   --color-text: #ffffff;
   --color-text-muted: rgba(255, 255, 255, 0.7);
   --radius: 12px;
@@ -71,7 +70,7 @@ body.page-scrollable {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.08);
+  background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.35) 100%);
 }
 
 /* ==================== 烟花画布 ==================== */
@@ -487,6 +486,9 @@ body.page-scrollable {
   text-align: center;
   min-width: 360px;
 }
+.winner-modal .btn {
+  margin-top: 12px;
+}
 
 .winner-announce {
   margin: 20px 0 30px;
@@ -503,12 +505,14 @@ body.page-scrollable {
   font-weight: 700;
   color: var(--color-gold);
   text-shadow: 0 0 30px rgba(241, 196, 15, 0.6);
+  overflow: hidden;
+  max-width: 100%;
   animation: winnerPulse 1.5s ease-in-out infinite;
 }
 
 @keyframes winnerPulse {
-  0%, 100% { transform: scale(1); text-shadow: 0 0 30px rgba(241, 196, 15, 0.6); }
-  50% { transform: scale(1.05); text-shadow: 0 0 50px rgba(241, 196, 15, 0.9); }
+  0%, 100% { text-shadow: 0 0 30px rgba(241, 196, 15, 0.6); }
+  50% { text-shadow: 0 0 50px rgba(241, 196, 15, 0.9); }
 }
 
 /* ==================== 参与人员列表 ==================== */
@@ -646,16 +650,6 @@ body.page-scrollable {
     min-width: auto;
     width: 90vw;
   }
-  .display-prize-name {
-    font-size: 32px;
-  }
-  .display-rolling {
-    font-size: 48px;
-  }
-  .display-stage {
-    height: 200px;
-    width: 95%;
-  }
 }
 
 /* ==================== 焦点样式（键盘导航） ==================== */
@@ -725,20 +719,6 @@ input:focus-visible {
 }
 
 /* ==================== 名单管理 ==================== */
-.name-toolbar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
-}
-.name-toolbar input {
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--color-card-border);
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--color-text);
-  font-size: 14px;
-}
 .btn-sm {
   padding: 4px 10px;
   font-size: 13px;
@@ -781,81 +761,6 @@ input:focus-visible {
   resize: vertical;
 }
 
-/* ==================== 大屏展示 ==================== */
-.display-page {
-  overflow: hidden;
-}
-.display-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  padding: 40px;
-  gap: 30px;
-}
-.display-prize-name {
-  font-size: 48px;
-  font-weight: 700;
-  color: var(--color-gold);
-  text-shadow: 0 0 30px rgba(241, 196, 15, 0.6);
-}
-.display-stage {
-  width: 80%;
-  height: 300px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: 20px;
-  border: 3px dashed var(--color-card-border);
-}
-.display-rolling {
-  font-size: 80px;
-  font-weight: 700;
-  color: var(--color-gold);
-  text-shadow: 0 0 30px rgba(241, 196, 15, 0.5);
-  text-align: center;
-}
-.display-rolling.winner-reveal {
-  animation: winnerBounce 0.6s ease-out;
-}
-.display-drawn {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: center;
-  max-width: 80%;
-}
-.display-drawn-badge {
-  padding: 8px 20px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--color-gold), var(--color-gold-dark));
-  color: #333;
-  font-size: 24px;
-  font-weight: 600;
-}
-.display-winner-modal {
-  min-width: 500px;
-}
-.display-winner-modal .winner-name {
-  font-size: 72px;
-}
-
-/* ==================== 倒计时 ==================== */
-.rolling-name.countdown {
-  font-size: 120px;
-  color: var(--color-primary);
-  text-shadow: 0 0 40px rgba(231, 76, 60, 0.8);
-}
-.countdown-pop {
-  animation: countdownPop 0.5s ease-out !important;
-}
-@keyframes countdownPop {
-  0% { transform: scale(2); opacity: 0; }
-  60% { transform: scale(0.9); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
 /* ==================== 在线人数 ==================== */
 .online-count {
   font-size: 13px;
@@ -872,41 +777,4 @@ input:focus-visible {
 }
 .btn-warning:hover {
   background: rgba(241, 196, 15, 0.2);
-}
-
-/* ==================== 文件上传 ==================== */
-.upload-label {
-  cursor: pointer;
-  position: relative;
-}
-.upload-label input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.prize-thumb {
-  width: 32px;
-  height: 32px;
-  object-fit: cover;
-  border-radius: 4px;
-  flex-shrink: 0;
-}
-.sound-upload-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.sound-upload-grid div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.sound-upload-grid label {
-  font-size: 14px;
-  min-width: 80px;
-}
-.sound-upload-grid input[type="file"] {
-  font-size: 13px;
-  color: var(--color-text-muted);
 }
