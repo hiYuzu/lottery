@@ -209,6 +209,11 @@ function broadcast(data) {
   });
 }
 
+/** 广播在线用户数量给所有客户端 */
+function broadcastOnlineCount() {
+  broadcast({ type: 'onlineCount', count: wss.clients.size });
+}
+
 wss.on('connection', ws => {
   console.log('[WS] 新客户端连接，当前连接数:', wss.clients.size);
 
@@ -223,6 +228,9 @@ wss.on('connection', ws => {
 
   // 连接建立后立即发送当前完整状态
   ws.send(JSON.stringify({ type: 'init', state: loadState() }));
+
+  // 广播在线用户数量
+  broadcastOnlineCount();
 
   ws.on('message', async raw => {
     let msg;
@@ -283,6 +291,8 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     drawCooldowns.delete(ws);
     console.log('[WS] 客户端断开，当前连接数:', wss.clients.size);
+    // 广播在线用户数量
+    broadcastOnlineCount();
   });
 
   ws.on('error', err => {
