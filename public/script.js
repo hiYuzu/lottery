@@ -213,7 +213,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   }
   function createFirework() { return { x: Math.random() * fireworksCanvas.width, y: fireworksCanvas.height, targetY: Math.random() * fireworksCanvas.height * 0.4 + 50, speed: 4 + Math.random() * 3, exploded: false, color: `hsl(${Math.random() * 360}, 80%, 60%)` }; }
   function animateFireworks() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'; ctx.fillRect(0, 0, fireworksCanvas.width, fireworksCanvas.height);
+    ctx.clearRect(0, 0, fireworksCanvas.width, fireworksCanvas.height);
     for (let i = fireworks.length - 1; i >= 0; i--) { const fw = fireworks[i]; if (!fw.exploded) { fw.y -= fw.speed; ctx.beginPath(); ctx.arc(fw.x, fw.y, 2, 0, Math.PI * 2); ctx.fillStyle = fw.color; ctx.fill(); if (fw.y <= fw.targetY) { fw.exploded = true; explode(fw); fireworks.splice(i, 1); } } }
     for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= 0.02; if (p.life <= 0) { particles[i] = particles[particles.length - 1]; particles.pop(); continue; } ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.fill(); }
     ctx.globalAlpha = 1;
