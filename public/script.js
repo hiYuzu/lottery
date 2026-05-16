@@ -241,9 +241,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     if (btnExport) btnExport.addEventListener('click', () => {
       const useExcel = confirm('点击"确定"导出 Excel，点击"取消"导出文本文件');
       if (useExcel) {
-        const token = sessionStorage.getItem('adminToken') || '';
-        const sep = token ? '&' : '';
-        window.open(`/api/export?format=xlsx${sep}token=${encodeURIComponent(token)}`, '_blank');
+        window.open('/api/export?format=xlsx', '_blank');
         showToast(toastEl, 'Excel 文件已下载');
       } else {
         if (!exportToText(state)) showToast(toastEl, '暂无中奖记录可导出');
