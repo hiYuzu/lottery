@@ -167,7 +167,41 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     isDrawing = false; isRolling = false; isDrawInitiator = false; btnDraw.disabled = false; btnDraw.textContent = '🎯 开始抽奖';
   }
 
-  function showWinnerModal(prizeName, winnerName) { winnerPrizeEl.textContent = `🎊 ${prizeName}`; winnerNameEl.textContent = winnerName; modalWinner.classList.remove('hidden'); }
+  function showWinnerModal(prizeName, winnerName) {
+    winnerPrizeEl.textContent = `🎊 ${prizeName}`;
+    winnerNameEl.textContent = winnerName;
+    modalWinner.classList.remove('hidden');
+    let posterBtn = $('btn-poster');
+    if (!posterBtn) {
+      posterBtn = document.createElement('button');
+      posterBtn.id = 'btn-poster';
+      posterBtn.className = 'btn';
+      posterBtn.textContent = '📸 生成海报';
+      posterBtn.style.marginTop = '10px';
+      $('btn-close-winner').parentNode.insertBefore(posterBtn, $('btn-close-winner'));
+      posterBtn.addEventListener('click', () => generatePoster(winnerPrizeEl.textContent, winnerNameEl.textContent));
+    }
+  }
+
+  function generatePoster(prizeTitle, winnerName) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 600; canvas.height = 800;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 600, 800);
+    grad.addColorStop(0, '#8b0000'); grad.addColorStop(0.5, '#c62828'); grad.addColorStop(1, '#7f0000');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 600, 800);
+    ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 4; ctx.strokeRect(20, 20, 560, 760);
+    ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 36px "Microsoft YaHei", sans-serif'; ctx.textAlign = 'center'; ctx.fillText('🎉 恭喜中奖 🎉', 300, 150);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 32px "Microsoft YaHei", sans-serif'; ctx.fillText(prizeTitle, 300, 280);
+    ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 60px "Microsoft YaHei", sans-serif'; ctx.fillText(winnerName, 300, 420);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = '20px "Microsoft YaHei", sans-serif'; ctx.fillText(new Date().toLocaleString('zh-CN'), 300, 540);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '16px "Microsoft YaHei", sans-serif'; ctx.fillText('多人同步抽奖系统', 300, 720);
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `中奖海报_${winnerName}.png`; a.click();
+      URL.revokeObjectURL(url); showToast(toastEl, '海报已生成');
+    }, 'image/png');
+  }
 
   let fireworks = [], particles = [], fireworksRunning = false;
   function resizeCanvas() { fireworksCanvas.width = window.innerWidth; fireworksCanvas.height = window.innerHeight; }
