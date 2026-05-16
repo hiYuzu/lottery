@@ -3,3 +3,4 @@ node_modules/
 state.json
 state.json.bak
 state.json.tmp
+.secret
