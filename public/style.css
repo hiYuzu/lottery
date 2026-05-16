@@ -801,3 +801,35 @@ input:focus-visible {
 .display-winner-modal .winner-name {
   font-size: 72px;
 }
+
+/* ==================== 倒计时 ==================== */
+.rolling-name.countdown {
+  font-size: 120px;
+  color: var(--color-primary);
+  text-shadow: 0 0 40px rgba(231, 76, 60, 0.8);
+}
+.countdown-pop {
+  animation: countdownPop 0.5s ease-out !important;
+}
+@keyframes countdownPop {
+  0% { transform: scale(2); opacity: 0; }
+  60% { transform: scale(0.9); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+/* ==================== 在线人数 ==================== */
+.online-count {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  padding: 4px 10px;
+  border: 1px solid var(--color-card-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+/* ==================== 警告按钮 ==================== */
+.btn-warning {
+  border-color: rgba(241, 196, 15, 0.5);
+  color: var(--color-gold);
+}
+.btn-warning:hover {
+  background: rgba(241, 196, 15, 0.2);
+}

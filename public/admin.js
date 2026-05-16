@@ -169,6 +169,8 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     btnAddPrize.addEventListener('click', addPrizeRow);
     btnSavePrizes.addEventListener('click', savePrizes);
     btnReset.addEventListener('click', resetLottery);
+    const btnUndo = $('btn-undo');
+    if (btnUndo) btnUndo.addEventListener('click', undoLastDraw);
     if (btnExport) btnExport.addEventListener('click', () => {
       const useExcel = confirm('点击"确定"导出 Excel，点击"取消"导出文本文件');
       if (useExcel) {

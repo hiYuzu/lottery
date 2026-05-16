@@ -30,6 +30,7 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
   let isDrawInitiator = false;
   let rollRAF = null;
   let musicOn = false;
+  let countdownRAF = null;
 
   const wsManager = createWS({
     onOpen: () => showToast(toastEl, '已连接到服务器'),
@@ -109,15 +110,41 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     if (!prize) { showToast(toastEl, '请先选择奖项', 'error'); return; }
     const remaining = prize.total - prize.drawn.length;
     if (remaining <= 0) { showToast(toastEl, `"${prize.name}" 名额已满`, 'error'); return; }
-    if (isRolling) { isRolling = false; isDrawInitiator = true; btnDraw.disabled = true; btnDraw.textContent = '抽奖中...'; send({ type: 'draw', prizeName: prize.name }); return; }
+    if (isRolling) {
+      if (countdownRAF) { clearTimeout(countdownRAF); countdownRAF = null; }
+      isRolling = false; isDrawInitiator = true; btnDraw.disabled = true; btnDraw.textContent = '抽奖中...';
+      send({ type: 'draw', prizeName: prize.name }); return;
+    }
     if (isDrawing) return;
     const allDrawn = new Set();
     state.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
     let candidates = nameList.filter(n => !allDrawn.has(n));
     if (!prize.isConsolation) candidates = candidates.filter(n => !hqPool.has(n));
     if (candidates.length === 0) { showToast(toastEl, '没有可供抽奖的候选人', 'error'); return; }
-    isDrawing = true; isRolling = true; btnDraw.textContent = '⏹ 停止抽奖';
-    startRollingAnimation(candidates);
+    isDrawing = true; btnDraw.disabled = true;
+    startCountdown(candidates);
+  }
+
+  function startCountdown(candidates) {
+    const steps = ['3', '2', '1'];
+    let stepIndex = 0;
+    rollingNameEl.classList.add('countdown');
+    rollingNameEl.classList.remove('animating', 'winner-reveal');
+    function tick() {
+      if (stepIndex < steps.length) {
+        rollingNameEl.textContent = steps[stepIndex];
+        rollingNameEl.classList.remove('countdown-pop');
+        void rollingNameEl.offsetWidth;
+        rollingNameEl.classList.add('countdown-pop');
+        stepIndex++;
+        countdownRAF = setTimeout(tick, 800);
+      } else {
+        rollingNameEl.classList.remove('countdown', 'countdown-pop');
+        isRolling = true; btnDraw.disabled = false; btnDraw.textContent = '⏹ 停止抽奖';
+        startRollingAnimation(candidates);
+      }
+    }
+    tick();
   }
 
   function startRollingAnimation(candidates) {
@@ -176,6 +203,16 @@ import { escapeHtml, showToast, parseNameList, loadNameList, createWS, exportToT
     prizeTabsEl.addEventListener('click', e => { const tab = e.target.closest('.prize-tab'); if (!tab || tab.classList.contains('full')) return; if (isDrawing || isRolling) { showToast(toastEl, '抽奖进行中，无法切换奖项', 'error'); return; } selectedPrizeIndex = parseInt(tab.dataset.index, 10); renderPrizeTabs(); renderDrawnList(); rollingNameEl.textContent = '准备抽奖'; rollingNameEl.classList.remove('animating', 'winner-reveal'); });
     btnCloseWinner.addEventListener('click', () => modalWinner.classList.add('hidden'));
     modalWinner.addEventListener('click', e => { if (e.target === modalWinner) modalWinner.classList.add('hidden'); });
+    document.addEventListener('keydown', e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.code === 'Space') { e.preventDefault(); startDraw(); }
+      if (e.code === 'Escape') { modalWinner.classList.add('hidden'); }
+    });
+    wsManager.on('onlineCount', msg => {
+      let el = $('online-count');
+      if (!el) { el = document.createElement('span'); el.id = 'online-count'; el.className = 'online-count'; document.querySelector('.toolbar-actions').prepend(el); }
+      el.textContent = `在线 ${msg.count} 人`;
+    });
     window.addEventListener('beforeunload', () => { if (rollRAF) cancelAnimationFrame(rollRAF); if (fireworksRunning) { fireworksRunning = false; ctx.clearRect(0, 0, fireworksCanvas.width, fireworksCanvas.height); } });
   }
 })();
