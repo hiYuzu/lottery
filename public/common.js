@@ -1,164 +1,170 @@
-/**
- * 抽奖系统公共模块
- * ES module — 供所有页面共享
- */
-
-export function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+export const $ = (id) => document.getElementById(id);
+export function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
 }
-
-export function showToast(el, message, type) {
-  el.textContent = message;
-  el.className = 'toast' + (type === 'error' ? ' error' : '');
-  clearTimeout(el._toastTimer);
-  el._toastTimer = setTimeout(() => {
-    el.classList.add('hidden');
-  }, 3000);
+export function toast(message) {
+  $("toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("toast").textContent = "";
+  }, 5000);
 }
-
-export function parseNameList(data) {
-  let names, hqPool;
-  if (Array.isArray(data)) {
-    names = data.map(item => item.name).filter(Boolean);
-    hqPool = new Set();
-  } else {
-    const list = data.name || [];
-    names = list.map(item => item.name).filter(Boolean);
-    hqPool = new Set(
-      list.filter(item => item.dept === 'CN').map(item => item.name).filter(Boolean)
+export function connect(onState, onConnection) {
+  let ws,
+    current,
+    ready = false,
+    stopped = false,
+    attempts = 0,
+    timer,
+    count;
+  const pending = new Map();
+  function disconnected() {
+    ready = false;
+    onConnection(false);
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error("连接中断"));
+    }
+    pending.clear();
+  }
+  function open() {
+    const token = sessionStorage.getItem("adminToken");
+    ws = new WebSocket(
+      (location.protocol === "https:" ? "wss://" : "ws://") +
+        location.host +
+        (token ? "?token=" + encodeURIComponent(token) : ""),
     );
-  }
-  return { names, hqPool };
-}
-
-export function loadNameList() {
-  return fetch('data/list.json')
-    .then(r => r.json())
-    .then(data => parseNameList(data));
-}
-
-export function createWS({ onMessage, onOpen, onClose, onError, getToken }) {
-  let ws = null;
-  let reconnectTimer = null;
-  let reconnectAttempts = 0;
-  let pendingMessages = [];
-  const MAX_PENDING = 10;
-  const handlers = {};
-
-  function getTokenParam() {
-    const token = getToken ? getToken() : null;
-    return token ? `?token=${encodeURIComponent(token)}` : '';
-  }
-
-  function connect() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}${getTokenParam()}`;
-    ws = new WebSocket(url);
-
-    ws.onopen = () => {
-      reconnectAttempts = 0;
-      clearReconnect();
-      if (onOpen) onOpen();
-      while (pendingMessages.length > 0) {
-        const msg = pendingMessages.shift();
-        ws.send(JSON.stringify(msg));
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.state) {
+        current = msg.state;
+        ready = true;
+        attempts = 0;
+        onConnection(true);
+        onState(msg);
       }
+      if (msg.count !== undefined) count = msg.count;
+      if (count !== undefined) {
+        const connection = $("connection");
+        if (connection) connection.textContent = "在线 " + count;
+      }
+      const request = pending.get(msg.requestId);
+      if (request) {
+        clearTimeout(request.timer);
+        pending.delete(msg.requestId);
+        if (msg.type === "error") request.reject(new Error(msg.message));
+        else request.resolve(msg);
+      } else if (msg.type === "error") toast(msg.message);
     };
-
-    ws.onmessage = e => {
-      let msg;
-      try { msg = JSON.parse(e.data); } catch { return; }
-      if (onMessage) onMessage(msg);
-      if (handlers[msg.type]) handlers[msg.type](msg);
-    };
-
     ws.onclose = () => {
-      if (onClose) onClose();
-      scheduleReconnect();
+      disconnected();
+      if (!stopped)
+        timer = setTimeout(open, Math.min(1000 * 2 ** attempts++, 15000));
     };
-
-    ws.onerror = () => {
-      if (onError) onError();
-    };
+    ws.onerror = () => ws.close();
   }
-
-  function scheduleReconnect() {
-    clearReconnect();
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-    reconnectAttempts++;
-    reconnectTimer = setTimeout(connect, delay);
-  }
-
-  function clearReconnect() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  }
-
-  function send(msg) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
-    } else {
-      if (pendingMessages.length >= MAX_PENDING) {
-        pendingMessages.shift();
-      }
-      pendingMessages.push(msg);
-    }
-  }
-
-  function on(type, handler) {
-    handlers[type] = handler;
-  }
-
-  function close() {
-    clearReconnect();
-    if (ws) ws.close();
-  }
-
-  function isConnected() {
-    return ws && ws.readyState === WebSocket.OPEN;
-  }
-
-  connect();
-
-  return { send, on, close, isConnected };
-}
-
-export function exportToText(state) {
-  // 提取当前会话数据
-  let session = state;
-  if (state.sessions && state.currentSession && state.sessions[state.currentSession]) {
-    session = state.sessions[state.currentSession];
-  }
-  const prizes = session.prizes || [];
-  const history = session.history || [];
-  const hasDrawn = prizes.some(p => p.drawn.length > 0);
-  if (!hasDrawn && history.length === 0) return false;
-
-  const lines = ['抽奖结果', ''];
-  prizes.filter(p => p.drawn.length > 0).forEach(p => {
-    lines.push(`${p.name}: ${p.drawn.join('、')}`);
+  open();
+  window.addEventListener("pagehide", () => {
+    stopped = true;
+    clearTimeout(timer);
+    ws.close();
   });
-  if (history.length > 0) {
-    lines.push('', '--- 抽奖记录 ---');
-    history.slice().reverse().forEach(h => {
-      const time = new Date(h.time).toLocaleString('zh-CN');
-      lines.push(`${time}  ${h.prizeName}  ${h.winners.join('、')}`);
-    });
-  }
-
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  return {
+    send(type, data = {}) {
+      if (!ready || ws.readyState !== WebSocket.OPEN)
+        return Promise.reject(new Error("连接中断"));
+      const requestId = Array.from(
+        crypto.getRandomValues(new Uint8Array(16)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          pending.delete(requestId);
+          ready = false;
+          onConnection(false);
+          ws.close();
+          reject(new Error("操作超时，正在同步"));
+        }, 10000);
+        pending.set(requestId, { resolve, reject, timer: timeout });
+        ws.send(
+          JSON.stringify({
+            ...data,
+            type,
+            requestId,
+            revision: current.revision,
+            sessionId: current.currentSession,
+          }),
+        );
+      });
+    },
+  };
+}
+export function dialog(title, html, acceptLabel) {
+  if (document.querySelector("dialog[open]")) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const previous = document.activeElement;
+    const el = document.createElement("dialog");
+    el.innerHTML =
+      '<form method="dialog"><h2>' +
+      escapeHtml(title) +
+      '</h2><div class="dialog-body">' +
+      html +
+      '</div><div class="actions"><button value="cancel">关闭</button>' +
+      (acceptLabel
+        ? '<button class="primary" value="accept">' +
+          escapeHtml(acceptLabel) +
+          "</button>"
+        : "") +
+      "</div></form>";
+    el.addEventListener(
+      "close",
+      () => {
+        resolve(el.returnValue === "accept");
+        el.remove();
+        previous?.focus();
+      },
+      { once: true },
+    );
+    document.body.append(el);
+    el.showModal();
+  });
+}
+export async function exportResults(format) {
+  const response = await fetch("/api/export?format=" + format);
+  if (!response.ok) throw new Error("导出失败");
+  const filename = (response.headers.get("Content-Disposition") || "").split(
+    "UTF-8''",
+  )[1];
+  download(
+    await response.blob(),
+    filename ? decodeURIComponent(filename) : "抽奖结果." + format,
+  );
+}
+export function download(blob, filename) {
+  const link = document.createElement("a");
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `抽奖结果_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
-  return true;
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export function bindExports() {
+  document.querySelectorAll("[data-export]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await exportResults(button.dataset.export);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    }),
+  );
 }

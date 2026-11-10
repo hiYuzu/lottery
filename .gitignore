@@ -1,6 +1,17 @@
 node_modules/
 .claude/
-state.json
-state.json.bak
-state.json.tmp
+.codex/
+.env
+.env.*
+!.env.example
+state.json*
 .secret
+*.log
+coverage/
+output/
+.playwright-cli/
+# Non-runtime documents
+*.md
+*.txt
+/docs/
+test/

@@ -1,60 +1,87 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>抽奖管理后台</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body class="page-scrollable">
-  <!-- 背景层 -->
-  <div id="bg-layer"></div>
-
-  <!-- 顶部工具栏 -->
-  <header class="toolbar">
-    <h1 class="title">⚙️ 抽奖管理后台</h1>
-    <div class="toolbar-actions">
-      <button id="btn-export" class="btn">📥 导出结果</button>
-      <a href="/" class="btn">🎯 返回抽奖页</a>
-    </div>
-  </header>
-
-  <!-- 主内容 -->
-  <main class="admin-container">
-    <!-- 奖项配置 -->
-    <section class="panel admin-section">
-      <h2>奖项配置</h2>
-      <div id="prize-editor" class="prize-editor"></div>
-      <div class="admin-actions">
-        <button id="btn-add-prize" class="btn">+ 添加奖项</button>
-        <button id="btn-save-prizes" class="btn btn-primary">保存配置</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>管理</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <h1>管理</h1>
+      <div class="actions">
+        <span id="connection">连接中</span><a href="/">主持台</a
+        ><a href="/?display=1" target="_blank">投屏</a
+        ><button id="logout">退出</button>
       </div>
-    </section>
-
-    <!-- 参与人员 -->
-    <section class="panel admin-section">
-      <h2>参与人员</h2>
-      <div id="name-list" class="name-grid"></div>
-      <div id="batch-import-panel">
-        <textarea id="batch-input" placeholder="每行一个：姓名,地区&#10;例：张三,BJ&#10;李四,SD" rows="5"></textarea>
-        <button id="btn-batch-confirm" class="btn btn-primary btn-sm">确认导入</button>
-      </div>
-    </section>
-
-    <!-- 抽奖控制 -->
-    <section class="panel admin-section">
-      <h2>抽奖控制</h2>
-      <div class="admin-actions">
-        <button id="btn-undo" class="btn btn-warning">↩️ 撤销上一次抽奖</button>
-        <button id="btn-reset" class="btn btn-danger">🔄 重置所有抽奖结果</button>
-      </div>
-      <p class="admin-hint">重置将清空所有奖项的中奖记录，此操作不可撤销。</p>
-    </section>
-  </main>
-
-  <!-- 提示 Toast -->
-  <div id="toast" class="toast hidden"></div>
-
-  <script type="module" src="admin.js"></script>
-</body>
+    </header>
+    <main class="admin-container">
+      <section class="panel">
+        <h2>活动</h2>
+        <div class="actions">
+          <label>活动<select id="sessions"></select></label
+          ><button id="switch-session">切换</button
+          ><button id="archive-session">归档</button>
+        </div>
+        <div class="actions">
+          <label>名称<input id="session-name" maxlength="80" /></label
+          ><label
+            >模式<select id="session-mode">
+              <option value="formal">正式</option>
+              <option value="rehearsal">彩排</option>
+            </select></label
+          ><button id="create-session">新建</button>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="section-heading">
+          <h2>奖项</h2>
+          <span id="draft-status"></span>
+        </div>
+        <form id="prize-form">
+          <div id="prize-editor"></div>
+          <div class="actions">
+            <button type="button" id="add-prize">添加</button
+            ><button class="primary" id="save-prizes">保存</button
+            ><button type="button" id="discard">还原</button>
+          </div>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>人员</h2>
+        <div class="actions">
+          <label>搜索<input id="search" /></label
+          ><label
+            >地区<select id="dept-filter">
+              <option value="">全部</option>
+            </select></label
+          ><label
+            >状态<select id="status-filter">
+              <option value="">全部</option>
+              <option value="drawn">已中奖</option>
+              <option value="available">未中奖</option>
+            </select></label
+          >
+        </div>
+        <div id="people"></div>
+        <label>名单<textarea id="batch-input" rows="5"></textarea></label>
+        <div class="actions">
+          <button id="preview">预览</button
+          ><button id="import" disabled>导入</button>
+        </div>
+        <div id="import-preview"></div>
+      </section>
+      <section class="panel">
+        <h2>抽奖控制</h2>
+        <div class="actions">
+          <button id="undo">撤销</button
+          ><button id="reset" class="danger">重置</button
+          ><button data-export="xlsx">Excel</button
+          ><button data-export="txt">文本</button>
+        </div>
+      </section>
+    </main>
+    <div id="toast" role="status"></div>
+    <script type="module" src="admin.js"></script>
+  </body>
 </html>

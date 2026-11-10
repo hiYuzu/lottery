@@ -1,699 +1,623 @@
-/**
- * 多人同步抽奖系统 - 服务端
- *
- * 技术栈：express（静态文件服务） + ws（WebSocket 实时通信）
- * 所有抽奖状态统一由本文件维护，通过 state.json 持久化。
- */
+const express = require("express");
+const http = require("http");
+const { WebSocketServer } = require("ws");
+const fs = require("fs");
+const fsp = fs.promises;
+const path = require("path");
+const crypto = require("crypto");
 
-const express = require('express');
-const http = require('http');
-const { WebSocketServer } = require('ws');
-const fs = require('fs');
-const fsp = require('fs').promises;
-const path = require('path');
-const crypto = require('crypto');
-
-// ==================== 配置 ====================
-const PORT = 3000;
-const STATE_FILE = path.join(__dirname, 'state.json');
-const LIST_FILE = path.join(__dirname, 'public', 'data', 'list.json');
-
-// ==================== 鉴权常量与工具函数 ====================
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
-const HMAC_SECRET_FILE = path.join(__dirname, '.secret');
-const TOKEN_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
-
-if (ADMIN_PASSWORD === 'admin') {
-  console.log('[警告] 使用默认管理员密码，请设置环境变量 ADMIN_PASSWORD');
+const PORT = Number(process.env.PORT || 3000);
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const STATE_FILE = path.join(DATA_DIR, "state.json");
+const PASSWORD = process.env.ADMIN_PASSWORD;
+if (!PASSWORD) throw new Error("请设置 ADMIN_PASSWORD");
+const secretPath = path.join(DATA_DIR, ".secret");
+if (!fs.existsSync(secretPath))
+  fs.writeFileSync(secretPath, crypto.randomBytes(32).toString("hex"), {
+    mode: 0o600,
+  });
+const secret = fs.readFileSync(secretPath, "utf8").trim();
+const clone = (value) => structuredClone(value);
+const id = () => crypto.randomUUID();
+const clean = (value) =>
+  typeof value === "string" ? value.trim().replace(/<[^>]*>/g, "") : "";
+function requireValue(condition, message) {
+  if (!condition) throw new Error(message);
 }
-
-let hmacSecret = null;
-
-function getHmacSecret() {
-  if (hmacSecret) return hmacSecret;
-  try {
-    hmacSecret = fs.readFileSync(HMAC_SECRET_FILE, 'utf-8').trim();
-  } catch {
-    hmacSecret = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(HMAC_SECRET_FILE, hmacSecret, 'utf-8');
-  }
-  return hmacSecret;
+function tokenForLogin() {
+  const data = Buffer.from(
+    JSON.stringify({ ts: Date.now(), id: id() }),
+  ).toString("base64url");
+  return (
+    data + "." + crypto.createHmac("sha256", secret).update(data).digest("hex")
+  );
 }
-
-function generateToken() {
-  const payload = { ts: Date.now(), rand: crypto.randomBytes(8).toString('hex') };
-  const data = Buffer.from(JSON.stringify(payload)).toString('base64');
-  const sig = crypto.createHmac('sha256', getHmacSecret()).update(data).digest('hex');
-  return `${data}.${sig}`;
-}
-
 function verifyToken(token) {
-  if (!token || typeof token !== 'string') return false;
-  const [data, sig] = token.split('.');
-  if (!data || !sig) return false;
-  const expected = crypto.createHmac('sha256', getHmacSecret()).update(data).digest('hex');
-  if (sig !== expected) return false;
+  if (typeof token !== "string") return false;
+  const [data, signature] = token.split(".");
+  if (!data || !/^[a-f0-9]{64}$/.test(signature || "")) return false;
+  const expected = crypto.createHmac("sha256", secret).update(data).digest();
+  if (!crypto.timingSafeEqual(expected, Buffer.from(signature, "hex")))
+    return false;
   try {
-    const payload = JSON.parse(Buffer.from(data, 'base64').toString('utf-8'));
-    return Date.now() - payload.ts < TOKEN_MAX_AGE;
+    const age = Date.now() - JSON.parse(Buffer.from(data, "base64url")).ts;
+    return age >= 0 && age < 86400000;
   } catch {
     return false;
   }
 }
-
-function stripHtml(str) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/<[^>]*>/g, '');
-}
-
-function sanitizeMessage(msg) {
-  if (msg.prizeName && typeof msg.prizeName === 'string') msg.prizeName = stripHtml(msg.prizeName);
-  if (msg.password && typeof msg.password === 'string') msg.password = stripHtml(msg.password);
-  if (Array.isArray(msg.prizes)) {
-    msg.prizes.forEach(p => {
-      if (p.name && typeof p.name === 'string') p.name = stripHtml(p.name);
-    });
+function migrate(raw) {
+  requireValue(raw && typeof raw === "object", "状态文件无效");
+  const state = raw.sessions
+    ? raw
+    : { currentSession: "default", sessions: { default: raw } };
+  requireValue(
+    state.sessions && Object.hasOwn(state.sessions, state.currentSession),
+    "活动状态无效",
+  );
+  let legacy = [];
+  const legacyPath = [
+    path.join(__dirname, "data/list.json"),
+    path.join(__dirname, "public/data/list.json"),
+  ].find((p) => fs.existsSync(p));
+  if (legacyPath) {
+    const list = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+    legacy = Array.isArray(list) ? list : list.name || [];
   }
-  return msg;
-}
-
-// ==================== Express 静态服务 ====================
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-const server = http.createServer(app);
-
-// ==================== 工具函数 ====================
-
-/** 读取 JSON 文件（异步），失败则返回默认值 */
-async function readJSON(filePath, fallback) {
-  try {
-    const raw = await fsp.readFile(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-}
-
-/** 写入 JSON 文件（异步原子写入：先写临时文件，再重命名替换） */
-async function writeJSON(filePath, data) {
-  const tmp = filePath + '.tmp';
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
-  await fsp.rename(tmp, filePath);
-}
-
-/** 同步读取 JSON（仅用于启动时初始化） */
-function readJSONSync(filePath, fallback) {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-}
-
-// ==================== 名单管理（异步 + 缓存） ====================
-
-let _cachedNameList = null;
-let _nameListCacheTime = 0;
-const NAME_LIST_TTL = 3000; // 3秒缓存
-
-/** 读取抽奖名单，带缓存 */
-async function loadNameList() {
-  const now = Date.now();
-  if (_cachedNameList && (now - _nameListCacheTime) < NAME_LIST_TTL) {
-    return _cachedNameList;
-  }
-  const data = await readJSON(LIST_FILE, { name: [] });
-  let names, hqPool;
-  if (Array.isArray(data)) {
-    names = data.map(item => item.name).filter(Boolean);
-    hqPool = new Set();
-  } else {
-    const list = data.name || [];
-    names = list.map(item => item.name).filter(Boolean);
-    hqPool = new Set(
-      list.filter(item => item.dept === 'CN').map(item => item.name).filter(Boolean)
+  state.revision ||= 0;
+  for (const [key, session] of Object.entries(state.sessions)) {
+    session.history ??= [];
+    requireValue(
+      Array.isArray(session.prizes) && Array.isArray(session.history),
+      "活动记录无效",
     );
+    session.name ||= key === "default" ? "抽奖活动" : key;
+    session.people ||= clone(legacy);
+    session.people.forEach((p) => {
+      p.id ||= id();
+      p.dept ||= "";
+    });
+    session.prizes.forEach((p) => {
+      p.id ||= id();
+      p.drawnIds ||= (p.drawn || []).flatMap((name) =>
+        session.people
+          .filter((person) => person.name === name)
+          .map((person) => person.id),
+      );
+      p.drawn ||= [];
+    });
+    session.history.forEach((h) => {
+      h.id ||= id();
+      h.prizeId ||= session.prizes.find((p) => p.name === h.prizeName)?.id;
+      h.winnerIds ||= h.winners.flatMap((name) =>
+        session.people.filter((p) => p.name === name).map((p) => p.id),
+      );
+    });
+    session.status ||= "open";
+    session.mode ||= "formal";
+    session.activeRound ||= null;
   }
-  _cachedNameList = { names, hqPool };
-  _nameListCacheTime = now;
-  return _cachedNameList;
+  return state;
 }
-
-// ==================== 状态管理（内存缓存 + 异步持久化） ====================
-
-const DEFAULT_STATE = {
-  prizes: [
-    { name: '三等奖', total: 3, perDraw: 1, drawn: [], isConsolation: false },
-    { name: '二等奖', total: 2, perDraw: 1, drawn: [], isConsolation: false },
-    { name: '一等奖', total: 1, perDraw: 1, drawn: [], isConsolation: false },
-  ],
-  history: [],
-};
-
-let cachedState = null;
-
-/** 读取/初始化抽奖状态（使用内存缓存） */
-function loadState() {
-  if (cachedState) return JSON.parse(JSON.stringify(cachedState));
-  cachedState = readJSONSync(STATE_FILE, DEFAULT_STATE);
-  if (!cachedState.history) cachedState.history = [];
-  return JSON.parse(JSON.stringify(cachedState));
-}
-
-/** 持久化状态（更新缓存 + 写入前先备份） */
-async function saveState(state) {
-  cachedState = state;
-  if (fs.existsSync(STATE_FILE)) {
-    fs.copyFileSync(STATE_FILE, STATE_FILE + '.bak');
-  }
-  await writeJSON(STATE_FILE, state);
-}
-
-// ==================== 多会话支持 ====================
-
-function migrateToSessions(state) {
-  if (state.sessions) return state;
-  return {
-    currentSession: 'default',
-    sessions: { default: { prizes: state.prizes || [], history: state.history || [] } },
-  };
-}
-
-function loadStateWithSessions() {
-  let state = loadState();
-  state = migrateToSessions(state);
-  cachedState = state;
-  return JSON.parse(JSON.stringify(state));
-}
-
-function getCurrentSession() {
-  const state = loadStateWithSessions();
-  const key = state.currentSession;
-  return { state, session: state.sessions[key], key };
-}
-
-// ==================== 全局互斥锁（防止并发状态修改） ====================
-
-let _mutexQueue = Promise.resolve();
-
-/** 将异步操作序列化，确保同一时间只有一个操作修改状态 */
-function withLock(fn) {
-  let release;
-  const prev = _mutexQueue;
-  _mutexQueue = new Promise(r => { release = r; });
-  return prev.then(() => fn()).finally(() => release());
-}
-
-// ==================== 抽奖频率限制 ====================
-const drawCooldowns = new Map(); // ws -> 上次抽奖时间戳
-const DRAW_COOLDOWN_MS = 2000; // 2秒冷却
-
-function checkDrawRateLimit(ws) {
-  const now = Date.now();
-  const last = drawCooldowns.get(ws) || 0;
-  if (now - last < DRAW_COOLDOWN_MS) return false;
-  drawCooldowns.set(ws, now);
-  return true;
-}
-
-// ==================== WebSocket 服务 ====================
-const wss = new WebSocketServer({ server, maxPayload: 10 * 1024 }); // 10KB 上限
-
-/** 广播消息给所有已连接的客户端 */
-function broadcast(data) {
-  const msg = JSON.stringify(data);
-  wss.clients.forEach(client => {
-    if (client.readyState === 1) {
-      client.send(msg);
+function initialState() {
+  const existing = [
+    STATE_FILE,
+    STATE_FILE + ".tmp",
+    STATE_FILE + ".bak",
+  ].filter((p) => fs.existsSync(p));
+  for (const file of existing) {
+    try {
+      const state = migrate(JSON.parse(fs.readFileSync(file, "utf8")));
+      if (file !== STATE_FILE) {
+        if (fs.existsSync(STATE_FILE))
+          fs.copyFileSync(STATE_FILE, STATE_FILE + ".corrupt-" + Date.now());
+        fs.copyFileSync(file, STATE_FILE);
+      }
+      return state;
+    } catch (error) {
+      console.error("状态恢复失败", path.basename(file), error.message);
     }
+  }
+  requireValue(existing.length === 0, "状态文件无法恢复");
+  return migrate({
+    prizes: ["三等奖", "二等奖", "一等奖"].map((name, i) => ({
+      name,
+      total: 3 - i,
+      perDraw: 1,
+      drawn: [],
+      isConsolation: false,
+    })),
+    history: [],
   });
 }
-
-/** 广播在线用户数量给所有客户端 */
-function broadcastOnlineCount() {
-  broadcast({ type: 'onlineCount', count: wss.clients.size });
+let state = initialState();
+// Persist generated IDs once so legacy identities stay stable across restarts.
+fs.writeFileSync(STATE_FILE + ".tmp", JSON.stringify(state, null, 2));
+fs.renameSync(STATE_FILE + ".tmp", STATE_FILE);
+let queue = Promise.resolve();
+function withLock(fn) {
+  const result = queue.then(fn);
+  queue = result.catch(() => {});
+  return result;
 }
-
-wss.on('connection', (ws, req) => {
-  console.log('[WS] 新客户端连接，当前连接数:', wss.clients.size);
-
-  // 解析 URL 中的 token 参数
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
-    ws._isAdmin = verifyToken(token);
-  } catch {
-    ws._isAdmin = false;
+async function save(next) {
+  next.revision = state.revision + 1;
+  await fsp.copyFile(STATE_FILE, STATE_FILE + ".bak");
+  await fsp.writeFile(STATE_FILE + ".tmp", JSON.stringify(next, null, 2));
+  await fsp.rename(STATE_FILE + ".tmp", STATE_FILE);
+  state = next;
+}
+function candidates(session, prize) {
+  const used = new Set(session.prizes.flatMap((p) => p.drawnIds));
+  return session.people.filter(
+    (p) => !used.has(p.id) && (prize.isConsolation || p.dept !== "CN"),
+  );
+}
+function snapshot(admin, token) {
+  const current = clone(state.sessions[state.currentSession]);
+  current.prizes.forEach((p) => {
+    p.eligible = candidates(current, p).length;
+  });
+  if (current.activeRound) {
+    current.activeRound.canReveal =
+      admin && current.activeRound.owner === token;
+    delete current.activeRound.owner;
   }
-
-  // 连接建立后立即发送当前完整状态
-  ws.send(JSON.stringify({ type: 'init', state: loadStateWithSessions() }));
-
-  // 广播在线用户数量
-  broadcastOnlineCount();
-
-  ws.on('message', async raw => {
+  if (!admin) {
+    delete current.people;
+    current.prizes.forEach((p) => delete p.drawnIds);
+    current.history.forEach((h) => delete h.winnerIds);
+  }
+  return {
+    revision: state.revision,
+    currentSession: state.currentSession,
+    session: current,
+    sessions: admin
+      ? Object.entries(state.sessions).map(([key, s]) => ({
+          key,
+          name: s.name,
+          status: s.status,
+          mode: s.mode,
+        }))
+      : [],
+  };
+}
+const app = express();
+app.use(express.json({ limit: "1mb" }));
+app.use("/data", (_req, res) => res.sendStatus(404));
+app.use(express.static(path.join(__dirname, "public")));
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, maxPayload: 1024 * 1024 });
+function send(ws, value) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(value));
+}
+function publish(type = "state", extra = {}) {
+  for (const ws of wss.clients)
+    send(ws, {
+      type,
+      state: snapshot(verifyToken(ws.token), ws.token),
+      admin: verifyToken(ws.token),
+      ...extra,
+    });
+}
+function sameRevision(msg) {
+  requireValue(
+    msg.sessionId === state.currentSession && msg.revision === state.revision,
+    "状态已更新，请重试",
+  );
+}
+async function mutate(ws, msg) {
+  requireValue(verifyToken(ws.token), "需要管理员登录");
+  const current = state.sessions[state.currentSession];
+  if (
+    msg.type === "draw" &&
+    current.history.some((h) => h.id === msg.roundId)
+  ) {
+    send(ws, {
+      type: "state",
+      state: snapshot(true, ws.token),
+      admin: true,
+      requestId: msg.requestId,
+    });
+    return;
+  }
+  sameRevision(msg);
+  const next = clone(state);
+  const session = next.sessions[next.currentSession];
+  requireValue(
+    session.status !== "archived" ||
+      ["switchSession", "createSession"].includes(msg.type),
+    "活动已归档",
+  );
+  if (!["draw", "cancelRound"].includes(msg.type))
+    requireValue(!session.activeRound, "抽奖进行中");
+  let event = "state";
+  switch (msg.type) {
+    case "startRound": {
+      const prize = session.prizes.find((p) => p.id === msg.prizeId);
+      requireValue(
+        prize &&
+          prize.drawn.length < prize.total &&
+          candidates(session, prize).length,
+        "无可用名额",
+      );
+      session.activeRound = {
+        id: id(),
+        prizeId: prize.id,
+        owner: ws.token,
+        startedAt: new Date().toISOString(),
+      };
+      event = "roundStarted";
+      break;
+    }
+    case "cancelRound":
+      requireValue(session.activeRound?.id === msg.roundId, "轮次已变更");
+      session.activeRound = null;
+      break;
+    case "draw": {
+      const round = session.activeRound;
+      requireValue(
+        round && round.id === msg.roundId && round.owner === ws.token,
+        "轮次或操作者已变更",
+      );
+      const prize = session.prizes.find((p) => p.id === round.prizeId);
+      const pool = candidates(session, prize);
+      const count = Math.min(
+        prize.perDraw,
+        prize.total - prize.drawn.length,
+        pool.length,
+      );
+      requireValue(count > 0, "无可用名额");
+      const winners = [];
+      for (let i = 0; i < count; i++)
+        winners.push(pool.splice(crypto.randomInt(pool.length), 1)[0]);
+      prize.drawn.push(...winners.map((p) => p.name));
+      prize.drawnIds.push(...winners.map((p) => p.id));
+      session.history.push({
+        id: round.id,
+        prizeId: prize.id,
+        prizeName: prize.name,
+        winners: winners.map((p) => p.name),
+        winnerIds: winners.map((p) => p.id),
+        time: new Date().toISOString(),
+      });
+      session.activeRound = null;
+      event = "drawResult";
+      break;
+    }
+    case "undo": {
+      const last = session.history.findLast((h) => !h.voidedAt);
+      requireValue(last && last.id === msg.historyId, "记录已变更");
+      const prize = session.prizes.find((p) => p.id === last.prizeId);
+      requireValue(prize, "奖项不存在");
+      const removed = new Set(last.winnerIds);
+      prize.drawnIds = prize.drawnIds.filter(
+        (personId) => !removed.has(personId),
+      );
+      for (const name of last.winners) {
+        const index = prize.drawn.indexOf(name);
+        if (index >= 0) prize.drawn.splice(index, 1);
+      }
+      last.voidedAt = new Date().toISOString();
+      event = "undoResult";
+      break;
+    }
+    case "updatePrizes": {
+      requireValue(Array.isArray(msg.prizes), "奖项格式错误");
+      const seenNames = new Set(),
+        seenIds = new Set();
+      const prizes = msg.prizes.map((p) => {
+        const name = clean(p.name);
+        requireValue(name && !seenNames.has(name), "奖项名称无效或重复");
+        requireValue(
+          Number.isInteger(p.total) &&
+            Number.isInteger(p.perDraw) &&
+            p.total >= 1 &&
+            p.perDraw >= 1 &&
+            p.perDraw <= p.total,
+          name + "名额无效",
+        );
+        seenNames.add(name);
+        const old = session.prizes.find((old) => old.id === p.id);
+        requireValue(!p.id || old, "奖项已变更");
+        const prizeId = old?.id || id();
+        requireValue(!seenIds.has(prizeId), "奖项重复");
+        seenIds.add(prizeId);
+        requireValue(!old || old.drawn.length <= p.total, "总名额少于中奖人数");
+        return {
+          id: prizeId,
+          name,
+          total: p.total,
+          perDraw: p.perDraw,
+          isConsolation: !!p.isConsolation,
+          drawn: old?.drawn || [],
+          drawnIds: old?.drawnIds || [],
+        };
+      });
+      requireValue(
+        session.prizes.every(
+          (p) =>
+            seenIds.has(p.id) ||
+            (!session.history.some((h) => h.prizeId === p.id) &&
+              !p.drawn.length),
+        ),
+        "已开奖记录的奖项不可删除",
+      );
+      session.prizes = prizes;
+      event = "prizesUpdated";
+      break;
+    }
+    case "updateNames": {
+      requireValue(Array.isArray(msg.people), "名单格式错误");
+      const seen = new Set();
+      const people = msg.people.map((p) => {
+        const personId = clean(p.id),
+          name = clean(p.name),
+          dept = clean(p.dept).toUpperCase();
+        requireValue(
+          personId && name && !seen.has(personId),
+          "人员编号或姓名无效",
+        );
+        seen.add(personId);
+        return { id: personId, name, dept };
+      });
+      for (const p of session.people) {
+        if (!session.prizes.some((prize) => prize.drawnIds.includes(p.id)))
+          continue;
+        requireValue(
+          people.some(
+            (nextPerson) =>
+              nextPerson.id === p.id && nextPerson.name === p.name,
+          ),
+          "已中奖人员不可删除或改名",
+        );
+      }
+      session.people = people;
+      event = "namesUpdated";
+      break;
+    }
+    case "createSession": {
+      const name = clean(msg.name);
+      requireValue(name, "活动名称不能为空");
+      const key = id();
+      next.sessions[key] = {
+        name,
+        mode: msg.mode === "rehearsal" ? "rehearsal" : "formal",
+        status: "open",
+        prizes: [],
+        people: [],
+        history: [],
+        activeRound: null,
+      };
+      next.currentSession = key;
+      event = "sessionChanged";
+      break;
+    }
+    case "switchSession":
+      requireValue(Object.hasOwn(next.sessions, msg.target), "活动不存在");
+      next.currentSession = msg.target;
+      event = "sessionChanged";
+      break;
+    case "archiveSession":
+      session.status = "archived";
+      break;
+    case "reset": {
+      next.sessions[id()] = {
+        ...clone(session),
+        name: session.name + " · " + new Date().toISOString(),
+        status: "archived",
+      };
+      session.prizes.forEach((p) => {
+        p.drawn = [];
+        p.drawnIds = [];
+      });
+      session.history = [];
+      event = "resetDone";
+      break;
+    }
+    default:
+      throw new Error("无效操作");
+  }
+  await save(next);
+  publish(event, { requestId: msg.requestId });
+}
+wss.on("connection", (ws, req) => {
+  ws.token = new URL(req.url, "http://localhost").searchParams.get("token");
+  send(ws, {
+    type: "init",
+    state: snapshot(verifyToken(ws.token), ws.token),
+    admin: verifyToken(ws.token),
+  });
+  publish("onlineCount", { count: wss.clients.size });
+  ws.on("message", (raw) => {
     let msg;
     try {
       msg = JSON.parse(raw);
-      msg = sanitizeMessage(msg);
+      requireValue(msg && typeof msg === "object", "无效操作");
     } catch {
-      ws.send(JSON.stringify({ type: 'error', message: '无效的消息格式' }));
+      send(ws, { type: "error", message: "无效操作" });
       return;
     }
-
-    try {
-      switch (msg.type) {
-        // -------- 登录 --------
-        case 'login': {
-          const pwd = msg.password;
-          if (!pwd || stripHtml(pwd) !== ADMIN_PASSWORD) {
-            ws.send(JSON.stringify({ type: 'loginResult', success: false }));
-            return;
-          }
-          ws._isAdmin = true;
-          const token = generateToken();
-          ws.send(JSON.stringify({ type: 'loginResult', success: true, token }));
-          break;
-        }
-        // -------- 抽奖 --------
-        case 'draw': {
-          await withLock(() => handleDraw(ws, msg));
-          break;
-        }
-        // -------- 更新奖项配置 --------
-        case 'updatePrizes': {
-          if (!isAdmin(ws)) {
-            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
-            break;
-          }
-          await withLock(() => handleUpdatePrizes(ws, msg));
-          break;
-        }
-        // -------- 重置抽奖 --------
-        case 'reset': {
-          if (!isAdmin(ws)) {
-            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
-            break;
-          }
-          await withLock(() => handleReset(ws));
-          break;
-        }
-        // -------- 撤销上一次抽奖 --------
-        case 'undo': {
-          if (!isAdmin(ws)) {
-            ws.send(JSON.stringify({ type: 'error', message: '需要管理员权限' }));
-            break;
-          }
-          await withLock(() => handleUndo(ws));
-          break;
-        }
-        default:
-          ws.send(JSON.stringify({ type: 'error', message: `未知消息类型: ${msg.type}` }));
-      }
-    } catch (err) {
-      console.error('[WS] 处理消息异常:', err);
-      ws.send(JSON.stringify({ type: 'error', message: '服务器内部错误' }));
-    }
+    withLock(() => mutate(ws, msg)).catch((error) =>
+      send(ws, {
+        type: "error",
+        message: error.message,
+        requestId: msg.requestId,
+        state: snapshot(verifyToken(ws.token), ws.token),
+        admin: verifyToken(ws.token),
+      }),
+    );
   });
-
-  ws.on('close', () => {
-    drawCooldowns.delete(ws);
-    console.log('[WS] 客户端断开，当前连接数:', wss.clients.size);
-    // 广播在线用户数量
-    broadcastOnlineCount();
+  ws.on("close", () => publish("onlineCount", { count: wss.clients.size }));
+  ws.on("error", (error) => console.error("WebSocket", error.message));
+});
+app.post("/api/login", (req, res) => {
+  if (req.body?.password !== PASSWORD)
+    return res.status(401).json({ success: false, error: "密码错误" });
+  res.json({ success: true, token: tokenForLogin() });
+});
+app.get("/api/verify", (req, res) =>
+  res.json({
+    valid: verifyToken(
+      req.headers.authorization?.replace("Bearer ", "") || req.query.token,
+    ),
+  }),
+);
+app.get("/api/names", (req, res) => {
+  if (
+    !verifyToken(
+      req.headers.authorization?.replace("Bearer ", "") || req.query.token,
+    )
+  )
+    return res.sendStatus(401);
+  res.json({ name: state.sessions[state.currentSession].people });
+});
+function apiMutation(type, getData) {
+  return (req, res) => {
+    const token = req.headers.authorization?.replace("Bearer ", "");
+    if (!verifyToken(token))
+      return res.status(401).json({ error: "需要管理员登录" });
+    const revision = state.revision,
+      sessionId = state.currentSession;
+    withLock(async () => {
+      await mutate({ token }, { ...getData(req), type, revision, sessionId });
+      res.json({ success: true });
+    }).catch((error) => res.status(400).json({ error: error.message }));
+  };
+}
+app.put(
+  "/api/names",
+  apiMutation("updateNames", (req) => ({
+    people: Array.isArray(req.body)
+      ? req.body.map((p) => ({
+          ...p,
+          id:
+            p.id ||
+            state.sessions[state.currentSession].people.find(
+              (old) => old.name === p.name,
+            )?.id ||
+            id(),
+        }))
+      : req.body,
+  })),
+);
+app.get("/api/sessions", (req, res) => {
+  if (
+    !verifyToken(
+      req.headers.authorization?.replace("Bearer ", "") || req.query.token,
+    )
+  )
+    return res.sendStatus(401);
+  res.json({
+    current: state.currentSession,
+    sessions: snapshot(true).sessions,
   });
-
-  ws.on('error', err => {
-    console.error('[WS] 连接异常:', err.message);
-  });
 });
-
-// ==================== 消息处理函数 ====================
-
-/** 处理抽奖请求 */
-async function handleDraw(ws, msg) {
-  const prizeName = msg.prizeName;
-  if (!prizeName || typeof prizeName !== 'string') {
-    ws.send(JSON.stringify({ type: 'error', message: '缺少奖项名称' }));
-    return;
-  }
-
-  // 频率限制
-  if (!checkDrawRateLimit(ws)) {
-    ws.send(JSON.stringify({ type: 'error', message: '操作过于频繁，请稍后' }));
-    return;
-  }
-
-  const { state, session, key } = getCurrentSession();
-  const prize = session.prizes.find(p => p.name === prizeName);
-
-  if (!prize) {
-    ws.send(JSON.stringify({ type: 'error', message: `奖项 "${prizeName}" 不存在` }));
-    return;
-  }
-
-  const remaining = prize.total - prize.drawn.length;
-  if (remaining <= 0) {
-    ws.send(JSON.stringify({ type: 'error', message: `奖项 "${prizeName}" 名额已满` }));
-    return;
-  }
-
-  // 计算候选人：名单中去除所有已中奖的人
-  const allDrawn = new Set();
-  session.prizes.forEach(p => p.drawn.forEach(n => allDrawn.add(n)));
-
-  const { names, hqPool } = await loadNameList();
-  let candidates = names.filter(n => !allDrawn.has(n));
-
-  if (!prize.isConsolation) {
-    candidates = candidates.filter(n => !hqPool.has(n));
-  }
-
-  if (candidates.length === 0) {
-    ws.send(JSON.stringify({ type: 'error', message: '没有可供抽奖的候选人' }));
-    return;
-  }
-
-  // 根据 perDraw 决定本次抽取人数
-  const perDraw = prize.perDraw || 1;
-  const drawCount = Math.min(perDraw, remaining, candidates.length);
-  const winners = [];
-  const pool = [...candidates];
-  for (let i = 0; i < drawCount; i++) {
-    const idx = Math.floor(Math.random() * pool.length);
-    winners.push(pool[idx]);
-    pool.splice(idx, 1);
-  }
-
-  prize.drawn.push(...winners);
-
-  // 记录抽奖历史
-  if (!session.history) session.history = [];
-  session.history.push({
-    prizeName,
-    winners: [...winners],
-    time: new Date().toISOString(),
-  });
-
-  state.sessions[key] = session;
-  await saveState(state);
-
-  // 广播中奖结果和最新状态
-  broadcast({
-    type: 'drawResult',
-    winners,
-    prizeName,
-    state,
-  });
-}
-
-/** 处理奖项配置更新 */
-async function handleUpdatePrizes(ws, msg) {
-  const prizes = msg.prizes;
-  if (!Array.isArray(prizes)) {
-    ws.send(JSON.stringify({ type: 'error', message: '奖项数据格式错误' }));
-    return;
-  }
-
-  // 校验每个奖项
-  const nameSet = new Set();
-  for (const p of prizes) {
-    const perDraw = Number(p.perDraw) || 1;
-    p.perDraw = perDraw;
-    if (!p.name || typeof p.total !== 'number' || p.total < 1 || perDraw < 1) {
-      ws.send(JSON.stringify({ type: 'error', message: '每个奖项必须有名称，总人数和单次抽取人数均≥1' }));
-      return;
-    }
-    if (perDraw > p.total) {
-      ws.send(JSON.stringify({ type: 'error', message: `"${p.name}" 的单次抽取人数不能超过总人数` }));
-      return;
-    }
-    if (Array.isArray(p.drawn) && p.drawn.length > p.total) {
-      ws.send(JSON.stringify({ type: 'error', message: `"${p.name}" 的总人数不能少于已中奖人数(${p.drawn.length}人)` }));
-      return;
-    }
-    const trimmedName = p.name.trim();
-    if (nameSet.has(trimmedName)) {
-      ws.send(JSON.stringify({ type: 'error', message: `奖项名称重复: "${trimmedName}"` }));
-      return;
-    }
-    nameSet.add(trimmedName);
-    if (!Array.isArray(p.drawn)) {
-      p.drawn = [];
-    }
-  }
-
-  const { state, session, key } = getCurrentSession();
-  session.prizes = prizes;
-  state.sessions[key] = session;
-  await saveState(state);
-
-  broadcast({ type: 'prizesUpdated', state });
-}
-
-/** 处理重置 */
-async function handleReset(ws) {
-  const { state, session, key } = getCurrentSession();
-  session.prizes.forEach(p => (p.drawn = []));
-  session.history = [];
-  state.sessions[key] = session;
-  await saveState(state);
-  broadcast({ type: 'resetDone', state });
-}
-
-/** 处理撤销上一次抽奖 */
-async function handleUndo(ws) {
-  const { state, session, key } = getCurrentSession();
-  if (!session.history || session.history.length === 0) {
-    ws.send(JSON.stringify({ type: 'error', message: '没有可撤销的抽奖记录' }));
-    return;
-  }
-
-  const last = session.history[session.history.length - 1];
-  const prize = session.prizes.find(p => p.name === last.prizeName);
-
-  if (!prize) {
-    ws.send(JSON.stringify({ type: 'error', message: `奖项 "${last.prizeName}" 已不存在，无法撤销` }));
-    return;
-  }
-
-  // 从 prize.drawn 中移除中奖者
-  for (const winner of last.winners) {
-    const idx = prize.drawn.indexOf(winner);
-    if (idx !== -1) prize.drawn.splice(idx, 1);
-  }
-
-  session.history.pop();
-  state.sessions[key] = session;
-  await saveState(state);
-
-  broadcast({ type: 'undoResult', state });
-}
-
-// ==================== 鉴权 REST API ====================
-
-app.post('/api/login', (req, res) => {
-  const password = req.body && req.body.password;
-  if (!password || stripHtml(password) !== ADMIN_PASSWORD) {
-    return res.status(401).json({ success: false, message: '密码错误' });
-  }
-  const token = generateToken();
-  res.json({ success: true, token });
+app.post(
+  "/api/sessions",
+  apiMutation("createSession", (req) => req.body),
+);
+app.put(
+  "/api/sessions/switch",
+  apiMutation("switchSession", (req) => ({ target: req.body.name })),
+);
+app.get("/api/export", (req, res) => {
+  const session = state.sessions[state.currentSession];
+  const summary = session.prizes.flatMap((prize) =>
+    prize.drawn.map((name) => ({
+      活动: session.name,
+      奖项: prize.name,
+      中奖者: name,
+    })),
+  );
+  const rows = session.history.flatMap((h) =>
+    h.winners.map((name) => ({
+      活动: session.name,
+      模式: session.mode === "rehearsal" ? "彩排" : "正式",
+      轮次: h.id,
+      奖项: h.prizeName,
+      中奖者: name,
+      时间: h.time,
+      状态: h.voidedAt ? "已撤销" : "有效",
+    })),
+  );
+  const format = req.query.format;
+  let body;
+  if (format === "xlsx") {
+    const XLSX = require("xlsx");
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(summary),
+      "中奖汇总",
+    );
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(rows),
+      "抽奖记录",
+    );
+    body = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    res.type(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+  } else if (format === "txt") {
+    body =
+      "\uFEFF" +
+      [
+        session.name,
+        "中奖汇总",
+        ...summary.map((row) => Object.values(row).join("\t")),
+        "抽奖记录",
+        ...rows.map((row) => Object.values(row).join("\t")),
+      ].join("\n");
+    res.type("text/plain");
+  } else return res.status(400).json({ error: "格式无效" });
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename*=UTF-8''${encodeURIComponent(session.name.replace(/[\\/:*?"<>|]/g, "_") + "_" + new Date().toISOString().slice(0, 10) + "." + format)}`,
+  );
+  res.send(body);
 });
-
-app.get('/api/verify', (req, res) => {
-  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  res.json({ valid: verifyToken(token) });
-});
-
-function isAdmin(ws) {
-  return ws._isAdmin === true;
+function publicURL() {
+  if (process.env.PUBLIC_URL) return new URL("/", process.env.PUBLIC_URL).href;
+  const interfaces = Object.entries(require("os").networkInterfaces())
+    .filter(
+      ([name]) =>
+        !/virtual|vethernet|docker|tailscale|loopback|tun|tap/i.test(name),
+    )
+    .flatMap(([, addresses]) => addresses)
+    .filter((address) => address.family === "IPv4" && !address.internal);
+  const local = interfaces.find((address) =>
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address.address),
+  );
+  const ip =
+    local?.address ||
+    interfaces.find((address) => !address.address.startsWith("198.18."))
+      ?.address ||
+    "localhost";
+  return `http://${ip}:${server.address().port}/`;
 }
-
-// ==================== REST API ====================
-app.get('/api/names', async (req, res) => {
-  const data = await readJSON(LIST_FILE, { name: [] });
-  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  if (verifyToken(token)) {
-    res.json(data);
-  } else {
-    res.json({ name: (data.name || []).map(n => ({ name: n.name })) });
-  }
-});
-
-app.put('/api/names', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) {
-    return res.status(401).json({ error: '需要管理员权限' });
-  }
-  const list = req.body;
-  if (!Array.isArray(list)) {
-    return res.status(400).json({ error: '数据格式错误，需要数组' });
-  }
-  for (const item of list) {
-    if (!item.name || typeof item.name !== 'string') {
-      return res.status(400).json({ error: '每个条目必须有 name 字段' });
-    }
-    item.name = stripHtml(item.name).trim();
-    if (item.dept && typeof item.dept === 'string') {
-      item.dept = stripHtml(item.dept).trim();
-    }
-  }
-  const data = { name: list };
-  await writeJSON(LIST_FILE, data);
-  _cachedNameList = null;
-  res.json({ success: true });
-});
-
-app.get('/api/export', async (req, res) => {
-  const format = req.query.format || 'txt';
-  const { state: fullState, session } = getCurrentSession();
-
-  if (format === 'xlsx') {
-    const XLSX = require('xlsx');
-    const wb = XLSX.utils.book_new();
-
-    const prizes = session.prizes || [];
-    const history = session.history || [];
-
-    const summaryData = prizes
-      .filter(p => p.drawn.length > 0)
-      .flatMap(p => p.drawn.map((name, i) => ({ '奖项': p.name, '中奖者': name, '序号': i + 1 })));
-    const ws1 = XLSX.utils.json_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, ws1, '中奖汇总');
-
-    const historyData = history.map(h => ({
-      '时间': new Date(h.time).toLocaleString('zh-CN'),
-      '奖项': h.prizeName,
-      '中奖者': h.winners.join('、'),
-    }));
-    const ws2 = XLSX.utils.json_to_sheet(historyData);
-    XLSX.utils.book_append_sheet(wb, ws2, '抽奖记录');
-
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=lottery_${Date.now()}.xlsx`);
-    res.send(buf);
-  } else {
-    res.status(400).json({ error: '不支持的格式，请使用 format=xlsx' });
-  }
-});
-
-// ==================== 二维码 ====================
-
-let detectedIP = null;
-
-function detectLocalIP() {
-  const os = require('os');
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        detectedIP = iface.address;
-        return;
-      }
-    }
-  }
-  detectedIP = 'localhost';
-}
-detectLocalIP();
-
-app.get('/api/qrcode', async (_req, res) => {
-  const QRCode = require('qrcode');
-  const url = `http://${detectedIP}:${PORT}`;
+app.get("/api/entry", (_req, res) => res.json({ url: publicURL() }));
+app.get("/api/qrcode", async (_req, res) => {
   try {
-    const svg = await QRCode.toString(url, { type: 'svg', width: 200 });
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.send(svg);
-  } catch (err) {
-    res.status(500).json({ error: '生成二维码失败' });
+    res.type("svg").send(
+      await require("qrcode").toString(publicURL(), {
+        type: "svg",
+        width: 240,
+      }),
+    );
+  } catch {
+    res.status(500).json({ error: "二维码生成失败" });
   }
 });
-
-// ==================== 会话管理 ====================
-
-app.get('/api/sessions', (req, res) => {
-  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
-  const state = loadStateWithSessions();
-  const sessions = Object.keys(state.sessions).map(key => ({
-    key, name: key,
-    drawCount: (state.sessions[key].history || []).length,
-    prizeCount: (state.sessions[key].prizes || []).length,
-  }));
-  res.json({ current: state.currentSession, sessions });
-});
-
-app.post('/api/sessions', (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
-  const name = stripHtml(req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: '活动名称不能为空' });
-  withLock(async () => {
-    const state = loadStateWithSessions();
-    if (state.sessions[name]) return res.status(400).json({ error: '活动已存在' });
-    state.sessions[name] = { prizes: [], history: [] };
-    state.currentSession = name;
-    cachedState = state;
-    await writeJSON(STATE_FILE, state);
-    broadcast({ type: 'sessionChanged', state, sessionName: name });
-    res.json({ success: true });
-  }).catch(err => res.status(500).json({ error: err.message }));
-});
-
-app.put('/api/sessions/switch', (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!verifyToken(token)) return res.status(401).json({ error: '需要管理员权限' });
-  const name = req.body.name;
-  withLock(async () => {
-    const state = loadStateWithSessions();
-    if (!state.sessions[name]) return res.status(404).json({ error: '活动不存在' });
-    state.currentSession = name;
-    cachedState = state;
-    await writeJSON(STATE_FILE, state);
-    broadcast({ type: 'sessionChanged', state, sessionName: name });
-    res.json({ success: true });
-  }).catch(err => res.status(500).json({ error: err.message }));
-});
-
-// ==================== 启动服务 ====================
-// 恢复：如果上次原子写入中断，.tmp 存在而 state.json 损坏或缺失
-if (fs.existsSync(STATE_FILE + '.tmp') && !fs.existsSync(STATE_FILE)) {
-  try {
-    fs.renameSync(STATE_FILE + '.tmp', STATE_FILE);
-    console.log('[恢复] 从临时文件恢复了 state.json');
-  } catch (_) { /* 忽略，走正常初始化 */ }
+server.listen(PORT, process.env.HOST || "0.0.0.0", () =>
+  console.log(`抽奖系统 http://localhost:${server.address().port}`),
+);
+function shutdown() {
+  wss.clients.forEach((ws) => ws.close());
+  server.close(() => queue.finally(() => process.exit(0)));
+  setTimeout(() => process.exit(1), 5000).unref();
 }
-
-// 初始化 state.json（仅首次）
-if (!fs.existsSync(STATE_FILE)) {
-  cachedState = JSON.parse(JSON.stringify(DEFAULT_STATE));
-  fs.writeFileSync(STATE_FILE, JSON.stringify(cachedState, null, 2), 'utf-8');
-} else {
-  cachedState = readJSONSync(STATE_FILE, DEFAULT_STATE);
-  if (!cachedState.history) cachedState.history = [];
-}
-
-server.listen(PORT, () => {
-  console.log(`\n🎉 抽奖系统已启动！`);
-  console.log(`   本地访问: http://localhost:${PORT}`);
-  console.log(`   局域网访问: http://<本机IP>:${PORT}`);
-  console.log(`   按 Ctrl+C 停止服务\n`);
-});
-
-// ==================== 优雅关闭 ====================
-function gracefulShutdown() {
-  console.log('\n正在关闭服务器...');
-  wss.clients.forEach(client => client.close());
-  server.close(() => {
-    console.log('服务器已关闭');
-    process.exit(0);
-  });
-  setTimeout(() => process.exit(1), 5000); // 强制退出兜底
-}
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
