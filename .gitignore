@@ -1,17 +1,26 @@
 node_modules/
-.claude/
-.codex/
+
+# Local configuration and runtime data
 .env
 .env.*
 !.env.example
-state.json*
 .secret
+state.json
+state.json.tmp
+state.json.bak
+state.json.corrupt-*
+
+# Local development files
+/.claude/
+/.codex/
+/.playwright-cli/
+/output/
+/coverage/
+/test/
 *.log
-coverage/
-output/
-.playwright-cli/
-# Non-runtime documents
-*.md
-*.txt
-/docs/
-test/
+
+# Local plans and notes
+/CLAUDE.md
+/lottery-optimization.md
+/docs/superpowers/
+/public/music/README.txt
