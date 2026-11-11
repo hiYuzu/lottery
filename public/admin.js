@@ -1,4 +1,5 @@
 import {
+  EVENT_YEAR,
   $,
   escapeHtml as esc,
   toast,
@@ -6,6 +7,7 @@ import {
   dialog,
   bindExports,
 } from "./common.js";
+document.querySelector(".event-year").textContent = EVENT_YEAR;
 if (!sessionStorage.getItem("adminToken")) location.replace("/login.html");
 let state,
   online = false,
@@ -153,13 +155,13 @@ function renderPeople() {
   $("people").innerHTML = people
     .map(
       (p) =>
-        '<div class="person-row"><span>' +
+        '<div class="person-row"><span data-label="姓名">' +
         esc(p.name) +
-        "</span><span>" +
+        '</span><span data-label="编号">' +
         esc(p.id) +
-        "</span><span>" +
+        '</span><span data-label="地区">' +
         esc(p.dept) +
-        "</span><span>" +
+        '</span><span data-label="状态">' +
         (used.has(p.id) ? "已中奖" : "未中奖") +
         '</span><button data-person="' +
         esc(p.id) +
@@ -393,7 +395,7 @@ $("undo").onclick = async () => {
         "</p><p>" +
         last.winners.map(esc).join("、") +
         "</p><time>" +
-        esc(last.time) +
+        esc(new Date(last.time).toLocaleString("zh-CN")) +
         "</time>",
       "确认",
     ))

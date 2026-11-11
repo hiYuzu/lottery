@@ -6,28 +6,37 @@
     <title>管理员登录</title>
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body class="page-scrollable">
-    <div id="bg-layer"></div>
+  <body class="login-page">
     <main class="login-container">
-      <div class="login-card panel">
-        <h1>🔐 管理员登录</h1>
-        <form id="login-form">
-          <input
-            type="password"
-            id="input-password"
-            placeholder="管理员密码"
-            aria-label="管理员密码"
-            autocomplete="current-password"
-            autofocus
-            required
-          />
-          <button type="submit" class="btn btn-primary btn-login">登录</button>
-        </form>
-        <div id="login-error" class="login-error hidden"></div>
-        <a href="/" class="login-back">抽奖</a>
+      <div class="login-card">
+        <div class="login-main">
+          <h1>管理员登录</h1>
+          <form id="login-form">
+            <label
+              >密码
+              <input
+                type="password"
+                id="input-password"
+                autocomplete="current-password"
+                autofocus
+                required
+              />
+            </label>
+            <button type="submit" class="primary">登录</button>
+          </form>
+          <div id="login-error" class="login-error hidden" role="alert"></div>
+          <a href="/" class="login-back">返回抽奖</a>
+        </div>
+        <aside class="login-stub" aria-label="年度抽奖">
+          <span>年度抽奖</span>
+          <strong class="event-year">2027</strong>
+          <div class="ticket-barcode" aria-hidden="true"></div>
+        </aside>
       </div>
     </main>
-    <script>
+    <script type="module">
+      import { EVENT_YEAR } from "./common.js";
+      document.querySelector(".event-year").textContent = EVENT_YEAR;
       (function () {
         "use strict";
         const form = document.getElementById("login-form");

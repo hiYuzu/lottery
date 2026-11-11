@@ -1,4 +1,5 @@
 import {
+  EVENT_YEAR,
   $,
   escapeHtml as esc,
   toast,
@@ -7,6 +8,7 @@ import {
   bindExports,
   download,
 } from "./common.js";
+document.querySelector(".event-year").textContent = EVENT_YEAR;
 const display = new URLSearchParams(location.search).has("display");
 document.body.classList.toggle("display", display);
 let state,
@@ -99,6 +101,9 @@ function render() {
   const last = session.history.findLast(
     (h) => !h.voidedAt && h.prizeId === selectedId,
   );
+  let roundNumber = session.history.length + 1;
+  if (!round && last) roundNumber = session.history.indexOf(last) + 1;
+  $("round-number").textContent = String(roundNumber).padStart(2, "0");
   $("stage").classList.toggle("rolling", !!round);
   $("stage").innerHTML = round
     ? "<span>抽奖中</span>"
@@ -119,7 +124,7 @@ function render() {
     ? "揭晓结果"
     : prize?.drawn.length >= prize?.total
       ? "已抽完"
-      : "开始滚动";
+      : "开始抽奖";
   $("cancel-round").hidden = !admin || display || !round;
   $("cancel-round").disabled = !online || busy;
   $("poster").hidden = !last || !!round;
@@ -145,7 +150,7 @@ function render() {
         " · " +
         h.winners.map(esc).join("、") +
         " <time>" +
-        new Date(h.time).toLocaleTimeString() +
+        new Date(h.time).toLocaleTimeString("zh-CN") +
         "</time>" +
         (h.voidedAt ? " · 已撤销" : "") +
         "</p>",
@@ -238,16 +243,48 @@ $("poster").onclick = () => {
   if (!last) return;
   const canvas = document.createElement("canvas");
   canvas.width = 900;
-  canvas.height = 280 + last.winners.length * 70;
+  canvas.height = 460 + last.winners.length * 84;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#481b23";
+  ctx.fillStyle = "#51272b";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#f3e6c6";
+  ctx.beginPath();
+  ctx.roundRect(48, 48, 804, canvas.height - 96, 14);
+  ctx.fill();
+  ctx.strokeStyle = "#94774966";
+  ctx.setLineDash([8, 9]);
+  ctx.beginPath();
+  ctx.moveTo(65, 210);
+  ctx.lineTo(835, 210);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#51272b";
+  for (const x of [48, 852]) {
+    ctx.beginPath();
+    ctx.arc(x, 210, 13, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.textAlign = "center";
-  ctx.fillStyle = "#f5d48b";
-  ctx.font = "bold 36px sans-serif";
-  ctx.fillText(state.session.name, 450, 70, 820);
-  ctx.fillText(last.prizeName, 450, 140, 820);
-  last.winners.forEach((name, i) => ctx.fillText(name, 450, 230 + i * 70, 820));
+  ctx.fillStyle = "#533e2d";
+  ctx.font = '32px "SimSun", serif';
+  ctx.fillText(state.session.name, 450, 120, 740);
+  ctx.fillStyle = "#887252";
+  ctx.font = "24px Georgia, serif";
+  ctx.fillText(document.querySelector(".event-year").textContent, 450, 170);
+  ctx.fillStyle = "#533e2d";
+  ctx.font = '32px "SimSun", serif';
+  ctx.fillText(last.prizeName, 450, 275, 740);
+  ctx.fillStyle = "#51272b";
+  ctx.font = '56px "SimSun", serif';
+  last.winners.forEach((name, i) => ctx.fillText(name, 450, 355 + i * 84, 740));
+  ctx.fillStyle = "#887252";
+  ctx.font = '20px "Microsoft YaHei", sans-serif';
+  ctx.fillText(
+    new Date(last.time).toLocaleString("zh-CN"),
+    450,
+    canvas.height - 84,
+    740,
+  );
   canvas.toBlob((blob) => {
     if (blob) download(blob, "中奖海报.png");
   });
@@ -311,7 +348,9 @@ function celebrate() {
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        color: `hsl(${Math.random() * 360},85%,70%)`,
+        color: ["#efd39b", "#d6ac68", "#f4e7c6", "#c67c60"][
+          Math.floor(Math.random() * 4)
+        ],
       });
     }
   }

@@ -6,9 +6,13 @@
     <title>抽奖</title>
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body>
+  <body class="draw-page">
     <header class="toolbar">
-      <h1 id="activity-name">抽奖</h1>
+      <div class="brand">
+        <a class="brand-mark" href="/" aria-label="抽奖首页">抽</a>
+        <h1 id="activity-name">年度抽奖</h1>
+        <span class="event-year">2027</span>
+      </div>
       <div class="actions">
         <span id="connection" role="status">连接中</span
         ><button id="fullscreen">全屏</button><button id="qr">二维码</button
@@ -17,19 +21,30 @@
       </div>
     </header>
     <main class="container">
-      <section class="panel stage-panel">
-        <nav id="prize-tabs" aria-label="奖项"></nav>
-        <span id="mode"></span>
-        <h2 id="prize-name">奖项</h2>
-        <div id="progress" class="metrics"></div>
-        <div id="stage" class="draw-stage" aria-live="polite">准备</div>
-        <div class="actions">
-          <button id="draw" class="primary draw-button" hidden>开始滚动</button
+      <section class="stage-panel">
+        <div class="stage-toolbar">
+          <nav id="prize-tabs" aria-label="奖项"></nav>
+          <span id="mode" class="mode-badge"></span>
+        </div>
+        <div class="draw-ticket">
+          <div class="ticket-main">
+            <h2 id="prize-name">奖项</h2>
+            <div id="stage" class="draw-stage" aria-live="polite">准备</div>
+            <div id="progress" class="metrics"></div>
+          </div>
+          <aside class="ticket-stub" aria-label="当前轮次">
+            <span>轮次</span>
+            <strong id="round-number">01</strong>
+            <div class="ticket-barcode" aria-hidden="true"></div>
+          </aside>
+        </div>
+        <div class="actions stage-actions">
+          <button id="draw" class="primary draw-button" hidden>开始抽奖</button
           ><button id="cancel-round" hidden>取消本轮</button
           ><button id="poster" hidden>海报</button>
         </div>
       </section>
-      <aside class="panel results-panel">
+      <aside class="results-panel">
         <h2>中奖名单</h2>
         <div id="results"></div>
         <details>
@@ -37,8 +52,8 @@
           <div id="history"></div>
         </details>
         <div class="actions">
-          <button data-export="xlsx">Excel</button
-          ><button data-export="txt">文本</button>
+          <button data-export="xlsx">导出表格</button
+          ><button data-export="txt">导出文本</button>
         </div>
       </aside>
     </main>

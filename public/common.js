@@ -1,3 +1,4 @@
+export const EVENT_YEAR = "2027";
 export const $ = (id) => document.getElementById(id);
 export function escapeHtml(value) {
   return String(value ?? "").replace(
